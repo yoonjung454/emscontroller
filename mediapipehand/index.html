@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI 비전 피드백 폐루프 EMS 제어 (웹 데모)</title>
+<style>
+  :root {
+    --bg: #14161c;
+    --panel: #1c1f28;
+    --panel-2: #232733;
+    --border: #2e3340;
+    --text: #e8eaf0;
+    --text-dim: #9aa1b2;
+    --accent: #4da6ff;
+    --accent-2: #6ee7b7;
+    --warn: #ffb454;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+    padding: 24px;
+    padding-bottom: 120px; /* room for the floating e-stop button */
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--text-dim); font-size: 13px; margin: 0 0 20px; }
+
+  .flow-strip {
+    display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 20px;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .flow-strip span.step {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 10px;
+  }
+  .flow-strip span.step.now { color: var(--accent-2); border-color: var(--accent-2); }
+
+  .layout { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+
+  .video-panel {
+    position: sticky; top: 24px; /* 오른쪽 카드들을 스크롤해도 카메라 화면은 계속 보이게 고정 */
+    width: 640px; max-width: 100%;
+    background: #000; border-radius: 12px; overflow: hidden;
+    border: 1px solid var(--border); flex-shrink: 0;
+    max-height: calc(100vh - 48px); /* 화면보다 커서 스크롤이 씹히는 일이 없도록 */
+  }
+  /* video-wrap은 더 이상 CSS로 미러링하지 않습니다 -- app.js가 캔버스에
+     이미 미러링된 화면을 직접 그리고, 그 화면 그대로 인식하기 때문에
+     좌우 반전 관련 버그(뱃지 텍스트 반전 등)가 구조적으로 생기지 않습니다. */
+  .video-wrap { position: relative; width: 100%; aspect-ratio: 4 / 3; }
+  video { display: none; }
+  canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  .status-badge {
+    position: absolute; left: 12px; padding: 6px 12px;
+    border-radius: 8px; font-size: 13px; font-weight: 600;
+    background: rgba(0,0,0,0.55); z-index: 5;
+  }
+  .status-badge.source { top: 12px; }
+  .status-badge.actual { top: 48px; }
+  .status-badge.ok.source { color: var(--accent); }
+  .status-badge.ok.actual { color: var(--warn); }
+  .status-badge.bad { color: var(--danger); }
+  .capture-overlay {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.5); z-index: 6;
+  }
+  .capture-overlay.active { display: flex; }
+  .capture-box {
+    background: rgba(20,22,28,0.9); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 24px; text-align: center; font-size: 16px; font-weight: 600; color: var(--accent);
+  }
+  .capture-box .progress { margin-top: 8px; font-size: 13px; color: var(--text-dim); font-weight: 400; }
+
+  .control-panel { flex: 1; min-width: 340px; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card h2 {
+    font-size: 14px; margin: 0 0 12px; color: var(--text-dim); font-weight: 600;
+    letter-spacing: 0.02em; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .badge-note {
+    font-size: 11px; font-weight: 500; color: var(--warn);
+    background: rgba(255, 180, 84, 0.12); padding: 2px 8px; border-radius: 6px;
+  }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  button {
+    font-family: inherit; font-size: 14px; font-weight: 600; border-radius: 8px;
+    border: 1px solid var(--border); padding: 10px 16px; cursor: pointer;
+    background: var(--panel-2); color: var(--text); transition: filter 0.15s;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.15); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #08131f; border-color: var(--accent); }
+  button.primary.running { background: var(--danger); color: #200; border-color: var(--danger); }
+  button.flat { background: #2a4d7a; border-color: #2a4d7a; }
+  button.bent { background: #7a4d2a; border-color: #7a4d2a; }
+  button.capture { background: #4da6ff; color: #08131f; border-color: #4da6ff; }
+  button.reset { background: transparent; color: var(--text-dim); }
+  button.preset { background: var(--panel-2); }
+  button.preset.selected { background: var(--accent); color: #08131f; border-color: var(--accent); }
+
+  .sub-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+  .command-row { display: flex; gap: 8px; }
+  .command-row input[type="text"] {
+    flex: 1; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); padding: 10px 12px; font-size: 14px; font-family: inherit;
+  }
+  .command-message { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); min-height: 1.4em; }
+
+  .safety-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; flex-wrap: wrap; }
+  .safety-row input[type="number"] {
+    width: 80px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); padding: 6px 8px; font-family: inherit; font-size: 13px;
+  }
+  .safety-row label { font-size: 13px; color: var(--text-dim); }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); margin-top: 8px; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--panel-2); color: var(--text-dim); }
+  .pill.ok { color: var(--accent-2); background: rgba(110,231,183,0.12); }
+  .pill.bad { color: var(--danger); background: rgba(255,107,107,0.12); }
+  .pill.warn { color: var(--warn); background: rgba(255,180,84,0.12); }
+
+  .compare-grid { display: flex; gap: 12px; margin-bottom: 12px; }
+  .compare-box { flex: 1; background: var(--panel-2); border-radius: 10px; padding: 12px; text-align: center; }
+  .compare-label { font-size: 11.5px; color: var(--text-dim); margin-bottom: 6px; }
+  .compare-value { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .stim-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; }
+  .stim-value { font-size: 32px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .state-line { font-size: 13px; margin-bottom: 4px; }
+  .state-line b { color: var(--accent-2); }
+
+  .log-box {
+    max-height: 130px; overflow-y: auto; background: var(--panel-2); border-radius: 8px;
+    padding: 8px 10px; font-size: 12px; color: var(--text-dim); line-height: 1.7;
+  }
+  .log-box div:last-child { color: var(--text); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+  tr.summary-row td { font-weight: 700; color: var(--accent-2); border-top: 1px solid var(--border); }
+  .err-cell { font-weight: 700; }
+  .need-cal { color: var(--warn); font-size: 12px; }
+  .hint { color: var(--text-dim); font-size: 12.5px; line-height: 1.6; }
+  .hint b { color: var(--text); }
+
+  .graph-canvas { width: 100%; height: 130px; background: var(--panel-2); border-radius: 8px; display: block; }
+  .graph-canvas + .graph-canvas { margin-top: 10px; }
+
+  .estop-fab {
+    position: fixed; bottom: 24px; right: 24px; z-index: 999;
+    width: 130px; height: 130px; border-radius: 50%;
+    background: var(--danger); color: #240202; border: 4px solid #ff9a9a;
+    font-size: 14px; font-weight: 800; line-height: 1.3;
+    box-shadow: 0 6px 24px rgba(255,107,107,0.45);
+  }
+  .estop-fab:hover { filter: brightness(1.1); }
+
+  .toast {
+    position: fixed; top: 20px; left: 50%; transform: translate(-50%, -20px);
+    z-index: 1000; background: var(--panel); border: 1px solid var(--border);
+    border-left: 4px solid var(--accent-2); border-radius: 10px;
+    padding: 12px 20px; font-size: 14px; font-weight: 600; color: var(--text);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s;
+    max-width: 90vw;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.warn { border-left-color: var(--warn); }
+  .toast.bad { border-left-color: var(--danger); }
+</style>
+</head>
+<body>
+
+<div class="toast" id="toast"></div>
+
+<h1>AI 비전 피드백 폐루프 EMS 제어 (웹 데모)</h1>
+<p class="subtitle">
+  왼손으로 원하는 동작을 만들어 <b>캡처(스냅샷)</b>하면 그게 목표가 되고, 오른손(EMS 연결 대상)이 카메라로
+  측정되며 그 목표에 가까워지도록 EMS 제어값(0~100, mA 아님)이 자동 조절됩니다.
+  자연어 명령/프리셋으로 목표를 직접 지정할 수도 있습니다.
+</p>
+
+<div class="flow-strip">
+  <span class="step now">① 왼손 캡처 또는 자연어 명령 → 목표 %</span>
+  <span class="step now">② 오른손 카메라 측정</span>
+  <span class="step now">③ 오차 계산</span>
+  <span class="step now">④ EMS 제어값 자동 조절</span>
+  <span class="step">Web Serial → Arduino → OpenEMSstim → 자극</span>
+  <span class="step now">성공 시 자동 정지</span>
+</div>
+
+<div class="layout">
+
+  <div class="video-panel">
+    <div class="video-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="overlay" class="overlay"></canvas>
+      <div class="capture-overlay" id="captureOverlay">
+        <div class="capture-box">
+          <div id="captureTitle">캡처 중...</div>
+          <div class="progress" id="captureProgress">0 / 15</div>
+        </div>
+      </div>
+    </div>
+    <div class="status-badge bad source" id="statusBadgeSource">왼손(TARGET): 대기 중</div>
+    <div class="status-badge bad actual" id="statusBadgeActual">오른손(ACTUAL): 대기 중</div>
+  </div>
+
+  <div class="control-panel">
+
+    <!-- 아래부터 실제로 켤 때 하는 순서대로: 카메라 실행 → 초기값 측정 →
+         안전설정/Arduino연결/제어시작 → 목표 설정 → 모니터링 -->
+
+    <div class="card">
+      <h2>① 실행 (카메라 · 왼손 + 오른손 동시 인식)</h2>
+      <div class="btn-row">
+        <button class="primary" id="runBtn">실행 시작</button>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="invertHandsCheckbox" />
+        <label for="invertHandsCheckbox">왼손/오른손이 반대로 인식되면 체크하세요</label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>② 초기값 측정 (펴짐 / 구부림)</h2>
+      <div class="btn-row">
+        <button class="flat" id="calFlatBtn" disabled>① 펴짐 초기값 측정</button>
+        <button class="bent" id="calBentBtn" disabled>② 구부림 초기값 측정</button>
+        <button class="reset" id="resetBtn">초기값 초기화</button>
+      </div>
+      <p class="hint" style="margin-top:12px;">
+        <b>오른손</b>을 <b>쫙 편 상태</b>로 유지하고 ①, <b>최대로 구부린 상태</b>로 유지하고 ②를 눌러주세요
+        (검지·중지·약지·새끼 4개 손가락 기준, 각 30프레임 평균). 이 보정값은 왼손 캡처값을 %로 환산할 때도
+        똑같이 사용됩니다 (두 손의 유연성이 비슷하다고 가정).
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>③ 안전 설정 &amp; Arduino 연결 <span class="badge-note">기본은 시뮬레이션(연결 없이도 동작)</span></h2>
+      <div class="safety-row">
+        <label for="safetyMaxInput">안전 최대 제어값 (0~100)</label>
+        <input type="number" id="safetyMaxInput" min="0" max="100" value="0" />
+        <span class="pill warn" id="safetyMaxPill">0 = 실제 출력 차단됨</span>
+      </div>
+      <p class="hint" style="margin-top:4px;">
+        "제어 시작"을 누르기 전까지는 캘리브레이션/캡처가 다 끝나도 <b>실제 자극이 나가지 않습니다.</b>
+        (제어 시작 버튼은 아래 ⑥ "목표 vs 실제 비교 &amp; 자극 제어" 칸으로 옮겼습니다.)
+        아래에서 목표까지 다 정한 다음, 준비가 되면 이 버튼으로 직접 시작하세요.
+      </p>
+      <p class="hint" style="margin-top:8px;">
+        (예전엔 "라이브 모드" 체크박스가 따로 있었는데, ▶ 제어 시작 버튼이 이미 같은 역할을 해서 없앴습니다.
+        Arduino를 연결하고 안전 최대값을 0보다 크게 설정한 상태에서 제어를 시작하면 오른손 채널 1로 실제 자극이 나갑니다.)
+      </p>
+      <div class="btn-row" style="margin-top:10px;">
+        <button id="serialConnectBtn">Arduino 연결 (Web Serial)</button>
+        <button class="reset" id="serialDisconnectBtn">연결 해제</button>
+      </div>
+      <div style="margin-top:8px;"><span class="pill" id="serialStatusPill">연결 안 됨</span></div>
+      <p class="hint" id="serialSupportHint" style="margin-top:8px;"></p>
+    </div>
+
+    <div class="card">
+      <h2>④ 개인화 캘리브레이션 (선택) <span class="badge-note" id="personalizationBadge">측정 안 됨</span></h2>
+      <p class="hint">
+        여러 자극값(예: 20/40/60/80)을 순서대로 짧게 줘 보고, 그때 오른손이 실제로 얼마나 구부러지는지 측정해서
+        "이 사람은 자극이 얼마면 얼마나 반응하는지" 개인별 곡선을 만듭니다. 아래에서 목표를 설정하면 이 곡선을
+        기반으로 시작 자극값을 더 정확하게 추천합니다 (안 해도 되지만, 하면 더 정확해집니다).
+      </p>
+      <p class="hint" style="margin-top:6px;">
+        시작 전 필요: <b>② 초기값 측정 완료</b> + <b>Arduino 연결</b> + <b>안전 최대 제어값 &gt; 0</b>.
+        시작하면 각 자극값을 4초씩 유지 후 측정하고, 사이사이 쉬는 시간이 있습니다. 진행 중에도 언제든
+        비상정지(SPACE/ESC) 또는 아래 '중지' 버튼으로 멈출 수 있습니다.
+      </p>
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="primary" id="personalizationBtn">개인화 측정 시작</button>
+      </div>
+      <div class="state-line" style="margin-top:10px;">진행 상태: <b id="personalizationStatusLine">대기 중</b></div>
+      <canvas id="graphPersonalization" class="graph-canvas" style="height:150px;"></canvas>
+      <p class="hint" id="personalizationSummary" style="margin-top:8px;">아직 측정된 데이터가 없습니다.</p>
+    </div>
+
+    <div class="card">
+      <h2>⑤ 목표 동작 설정 <span class="badge-note" id="aiStatusBadge">실제 AI 아님 · 정해진 표현/패턴만 인식</span></h2>
+
+      <div class="btn-row">
+        <button class="capture" id="captureBtn" disabled>📸 왼손 동작 캡처 (스냅샷)</button>
+      </div>
+      <p class="hint" style="margin-top:8px;">
+        왼손으로 원하는 손 모양을 만든 채로 위 버튼을 누르면, 약 0.5초간(15프레임) 평균을 내서
+        그 손가락별 굽힘값을 목표로 저장합니다. 오른손이 그 값에 가까워지도록 자동 조절됩니다.
+      </p>
+
+      <div class="sub-section">
+        <div class="command-row">
+          <input type="text" id="commandInput" placeholder="또는 명령으로: 손을 반쯤 쥐어 / 45% 쥐어 / 정지" />
+          <button class="primary" id="commandRunBtn">실행</button>
+        </div>
+        <div class="btn-row" style="margin-top:10px;">
+          <button class="preset" id="presetLight">살짝 (<span id="presetLightVal">30</span>%)</button>
+          <button class="preset" id="presetHalf">반쯤 (<span id="presetHalfVal">60</span>%)</button>
+          <button class="preset" id="presetStrong">꽉 (<span id="presetStrongVal">90</span>%)</button>
+        </div>
+        <div class="command-message" id="commandMessage"></div>
+        <p class="hint" style="margin-top:8px;" id="ruleBasedHint">
+          ※ 실제 AI(LLM)가 문장을 이해하는 게 아니라, <b>정해진 키워드/패턴만 규칙적으로 인식</b>하는 방식입니다.
+          인식되는 표현: "살짝/조금만 쥐어", "반쯤/반만 쥐어", "꽉/최대한 쥐어", "NN% 쥐어" (0~100 임의 숫자), "정지/멈춰/손 펴", "종료".
+          이 외의 문장은 인식하지 못하고 안내 메시지가 뜹니다.
+        </p>
+      </div>
+
+      <div class="sub-section">
+        <div class="checkbox-row" style="margin-top:0;">
+          <input type="checkbox" id="aiEnabledCheckbox" />
+          <label for="aiEnabledCheckbox">🤖 실제 AI(Google Gemini)로 명령 해석 사용 — 자유로운 문장도 이해</label>
+        </div>
+        <div id="aiConfigRow" style="display:none; margin-top:8px;">
+          <div class="safety-row" style="margin:4px 0;">
+            <label for="aiApiKeyInput" style="min-width:70px;">API 키</label>
+            <input type="password" id="aiApiKeyInput" placeholder="AIzaSy..." style="flex:1; min-width:160px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:6px 8px; font-family:inherit; font-size:13px;" />
+          </div>
+          <div class="safety-row" style="margin:4px 0;">
+            <label for="aiModelInput" style="min-width:70px;">모델</label>
+            <input type="text" id="aiModelInput" value="gemini-3.7-flash" style="width:180px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:6px 8px; font-family:inherit; font-size:13px;" />
+          </div>
+          <p class="hint" style="margin-top:6px;">
+            ⚠️ 이 키는 <b>이 브라우저에만(localStorage)</b> 저장되고, 이 컴퓨터에서 <b>Google Gemini API로 직접</b> 전송됩니다
+            (Claude Code나 다른 곳을 거치지 않습니다). 공용 컴퓨터에서는 사용 후 아래 체크를 해제하고 키를 지워주세요.
+            AI 호출이 실패하면 자동으로 규칙 기반 해석으로 대체됩니다.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>⑥ 목표 vs 실제 비교 &amp; 자극 제어 (실시간 모니터링)</h2>
+      <div class="compare-grid">
+        <div class="compare-box">
+          <div class="compare-label">TARGET (왼손 캡처/명령)</div>
+          <div class="compare-value" id="targetValueDisplay">-</div>
+        </div>
+        <div class="compare-box">
+          <div class="compare-label">ACTUAL (오른손 · 4손가락 평균)</div>
+          <div class="compare-value" id="actualValueDisplay">-</div>
+        </div>
+        <div class="compare-box">
+          <div class="compare-label">오차</div>
+          <div class="compare-value" id="errorValueDisplay">-</div>
+        </div>
+      </div>
+      <div class="stim-row">
+        <div>
+          <div class="hint">EMS 제어값 (0~100, mA 아님)</div>
+          <div class="stim-value" id="stimValueDisplay">0</div>
+          <div class="hint" id="hardwareSentHint" style="margin-top:2px;">실제 전송값: -</div>
+        </div>
+        <button class="primary" id="startControlBtn">▶ 제어 시작</button>
+        <div style="text-align:right;">
+          <div class="hint">경과 시간</div>
+          <div class="stim-value" id="elapsedDisplay" style="font-size:20px;">0s</div>
+        </div>
+      </div>
+      <div class="state-line">판단 상태: <b id="controlStateText">대기</b></div>
+      <div class="log-box" id="controlLog"></div>
+    </div>
+
+    <div class="card">
+      <h2>손가락별 목표 vs 실제</h2>
+      <table>
+        <thead>
+          <tr><th>손가락</th><th class="num">TARGET(왼손)</th><th class="num">ACTUAL(오른손)</th><th class="num">오차</th></tr>
+        </thead>
+        <tbody id="fingerTableBody"></tbody>
+        <tfoot>
+          <tr class="summary-row">
+            <td>평균 (1채널 대표값)</td>
+            <td class="num" id="avg-target">-</td>
+            <td class="num" id="avg-actual">-</td>
+            <td class="num err-cell" id="avg-error">-</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>실시간 그래프</h2>
+      <canvas id="graphPercent" class="graph-canvas"></canvas>
+      <canvas id="graphIntensity" class="graph-canvas"></canvas>
+    </div>
+
+    <div class="card">
+      <h2>데이터 기록</h2>
+      <p class="hint">기록된 tick: <span id="logCountText">0</span>개</p>
+      <div class="btn-row">
+        <button id="downloadCsvBtn">CSV 다운로드</button>
+        <button class="reset" id="clearLogBtn">기록 초기화</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<button class="estop-fab" id="estopBtn">■<br/>비상 정지<br/>(SPACE/ESC)</button>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
