@@ -1,5 +1,6 @@
 import {
   HandLandmarker,
+  PoseLandmarker,
   FilesetResolver
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -57,6 +58,19 @@ const DISPLAY_FINGER_KEYS = [...FINGER_KEYS, "Thumb"];
 const ROLES = ["source", "actual"];
 const ROLE_LABELS = { source: "왼손(TARGET)", actual: "오른손(ACTUAL)" };
 const ROLE_COLORS = { source: "#4da6ff", actual: "#ffb454" };
+
+// ============================================================================
+// 팔 인식 모드 (MediaPipe Pose Landmarker) -- 손가락 대신 팔꿈치 굽힘을 재는
+// 4번째 모드 전용 상수. 손 인식(HandLandmarker)과 완전히 별도의 모델이며,
+// "팔 인식" 모드일 때만 동작(perf 절약 -- ensurePoseLandmarker/renderLoop 참고).
+// ============================================================================
+// Pose Landmarker는 한 사람의 몸 전체를 한 번에 인식하므로(손처럼 손마다 따로
+// 나오지 않음), 아래 두 팔(어깨/팔꿈치/손목 인덱스)이 항상 같이 결과에 들어있다.
+// 모델 자체의 "왼쪽/오른쪽" 라벨은 신뢰하지 않고(손 인식과 같은 이유 -- 미러링된
+// 캔버스를 인식시키므로), 화면에 실제로 보이는 x좌표로 역할을 정한다.
+const POSE_ARM_A = { shoulder: 11, elbow: 13, wrist: 15 };
+const POSE_ARM_B = { shoulder: 12, elbow: 14, wrist: 16 };
+const POSE_VISIBILITY_THRESHOLD = 0.5; // 이 미만이면 가려짐/화면 밖으로 취급
 
 const SMOOTH_WINDOW = 5;
 const EMA_ALPHA = 0.35;
@@ -153,9 +167,9 @@ let selectedAction = null;
 let liveMirrorActive = false;
 
 // 앱 모드 -- "mirror"(거울 모드) | "action"(행동 보조 모드, 오픈루프) |
-// "personalization"(개인화 모드, 수동 램프업). 세 모드는 동시에 활성화되지
-// 않는다 -- setAppMode()가 모드를 바꿀 때마다 이전 모드에서 돌고 있던 걸
-// 전부 정지시킨다 (아래 설명 참고).
+// "personalization"(개인화 모드, 수동 램프업) | "arm"(팔 인식 모드, 팔꿈치
+// 버전 거울 모드). 네 모드는 동시에 활성화되지 않는다 -- setAppMode()가
+// 모드를 바꿀 때마다 이전 모드에서 돌고 있던 걸 전부 정지시킨다 (아래 설명 참고).
 let appMode = "mirror";
 
 // 행동 보조 모드 상태 -- "물따르기"/"이두운동" 중 하나만 동시에 실행 가능.
@@ -219,6 +233,14 @@ function calculateFingerBend(worldLandmarks, joints) {
     total += Math.max(0, 180 - angle);
   }
   return Math.min(total, 270);
+}
+
+// 손가락(관절 3개 합)과 달리 팔꿈치는 관절 1개뿐이라 calculateFingerBend를 그대로
+// 쓰지 않고 calculateJointAngle만 재사용한다 -- 계산 공식(세 점 사이 각도, "편
+// 상태=180도"→"굽힘=0"으로 뒤집기)은 손가락과 완전히 동일하다.
+function calculateArmBend(worldLandmarks, shoulderIdx, elbowIdx, wristIdx) {
+  const angle = calculateJointAngle(worldLandmarks[shoulderIdx], worldLandmarks[elbowIdx], worldLandmarks[wristIdx]);
+  return Math.max(0, 180 - angle);
 }
 
 class MedianEmaFilter {
@@ -309,6 +331,7 @@ let sweep = null; // 개인화 캘리브레이션 진행 중 상태, 없으면 n
 
 let isRunning = false;
 let handLandmarker = null;
+let poseLandmarker = null; // "팔 인식" 모드에서만 생성/사용 (ensurePoseLandmarker 참고)
 let lastVideoTime = -1;
 let invertHandedness = false;
 
@@ -319,6 +342,16 @@ for (const role of ROLES) for (const finger of DISPLAY_FINGER_KEYS) filters[role
 const detectedThisFrame = { source: false, actual: false };
 let consecutiveMissActual = 0;
 let handLostSustained = true; // ACTUAL(오른손) 기준, 안전 판단에 사용
+
+// 팔별(source/actual) 필터 · 최신값 -- 손가락과 구조는 같지만 팔은 값이 하나뿐이라
+// (손가락처럼 4개가 아님) finger 키로 순회하는 객체 대신 단순 source/actual 필드로 둔다.
+const armFilters = { source: new MedianEmaFilter(SMOOTH_WINDOW, EMA_ALPHA), actual: new MedianEmaFilter(SMOOTH_WINDOW, EMA_ALPHA) };
+const armLatestSmoothed = { source: null, actual: null }; // role -> degrees
+const armLatestPercent = { source: null, actual: null }; // role -> 0-100 | null
+const armDetectedThisFrame = { source: false, actual: false };
+let consecutiveMissArmActual = 0;
+let armLostSustained = true; // ACTUAL(오른팔) 기준, "팔 인식" 모드의 안전 판단에 사용
+let armSampling = null; // 팔 초기값(펴짐/구부림) 측정 -- { mode, sum, count, startedAt }
 
 const latestSmoothed = { source: {}, actual: {} }; // role -> finger -> degrees
 const latestPercent = { source: {}, actual: {} }; // role -> finger -> 0-100 | null
@@ -396,20 +429,28 @@ const tableBody = document.getElementById("fingerTableBody");
 // const sourceLiveTableBody = document.getElementById("sourceLiveTableBody");
 // const mirrorTargetCard = document.getElementById("mirrorTargetCard");
 
-// 모드 선택 (거울 / 행동 보조 / 개인화) -- 3개
+// 모드 선택 (거울 / 행동 보조 / 개인화 / 팔 인식) -- 4개
 const modeMirrorBtn = document.getElementById("modeMirrorBtn");
 const modeActionBtn = document.getElementById("modeActionBtn");
 const modePersonalizationBtn = document.getElementById("modePersonalizationBtn");
+const modeArmBtn = document.getElementById("modeArmBtn");
 const modeDescriptionText = document.getElementById("modeDescriptionText");
 const mirrorModeCard = document.getElementById("mirrorModeCard");
 const actionModeCard = document.getElementById("actionModeCard");
 const personalizationModeCard = document.getElementById("personalizationModeCard");
+const armModeCard = document.getElementById("armModeCard");
 
 const actionButtonsRow = document.getElementById("actionButtonsRow");
 const selectedActionText = document.getElementById("selectedActionText");
 const actionDescriptionText = document.getElementById("actionDescriptionText");
 const targetCompareLabel = document.getElementById("targetCompareLabel");
+const actualCompareLabel = document.getElementById("actualCompareLabel");
 const liveMirrorBtn = document.getElementById("liveMirrorBtn");
+
+// 팔 인식 모드
+const armCalFlatBtn = document.getElementById("armCalFlatBtn");
+const armCalBentBtn = document.getElementById("armCalBentBtn");
+const armResetBtn = document.getElementById("armResetBtn");
 
 // 행동 보조 모드 (오픈루프 고정 전류)
 const spoonLiftCh1Input = document.getElementById("spoonLiftCh1Input");
@@ -587,6 +628,14 @@ resetBtn.addEventListener("click", () => {
   buildTable();
   showToast("🔄 초기값이 초기화되었습니다", "warn");
 });
+armCalFlatBtn.addEventListener("click", () => startArmSampling("flat"));
+armCalBentBtn.addEventListener("click", () => startArmSampling("bent"));
+armResetBtn.addEventListener("click", () => {
+  delete calibration.flat.Arm;
+  delete calibration.bent.Arm;
+  saveCalibration();
+  showToast("🔄 팔 초기값이 초기화되었습니다", "warn");
+});
 // 예전 거울 모드 카드(캡처/명령/프리셋)의 이벤트 바인딩 -- 카드가 제거되어
 // 비활성화 (관련 함수 자체는 아래에 그대로 남아있음, 복구 가능)
 // captureBtn.addEventListener("click", startCapture);
@@ -595,6 +644,7 @@ liveMirrorBtn.addEventListener("click", toggleLiveMirror);
 modeMirrorBtn.addEventListener("click", () => setAppMode("mirror"));
 modeActionBtn.addEventListener("click", () => setAppMode("action"));
 modePersonalizationBtn.addEventListener("click", () => setAppMode("personalization"));
+modeArmBtn.addEventListener("click", () => setAppMode("arm"));
 
 spoonLiftBtn.addEventListener("click", () => startSequentialRamp("spoonLift", 2000, 3000));
 bicepBtn.addEventListener("click", startBicepRoutine);
@@ -970,6 +1020,33 @@ async function saveProfileToSupabase() {
 // 카메라 실행 / 정지
 // ============================================================================
 
+// "팔 인식" 모드일 때만 필요한 Pose Landmarker -- 손 모델과 별개 모델(약 5.7MB)이라
+// 처음부터 같이 불러오지 않고, 실제로 그 모드에 들어갈 때(setAppMode)만 불러온다
+// (한 번 불러오면 poseLandmarker에 캐시되어 재사용됨). setAppMode와 startRun 양쪽에서
+// 거의 동시에 호출될 수 있어서, 진행 중인 로딩 Promise를 poseLandmarkerPromise에
+// 캐시해 중복으로 두 번 불러오는 걸 막는다.
+let poseLandmarkerPromise = null;
+async function ensurePoseLandmarker() {
+  if (poseLandmarker) return poseLandmarker;
+  if (!poseLandmarkerPromise) {
+    poseLandmarkerPromise = (async () => {
+      const filesetResolverPose = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+      poseLandmarker = await PoseLandmarker.createFromOptions(filesetResolverPose, {
+        baseOptions: { modelAssetPath: "./pose_landmarker_lite.task" },
+        runningMode: "VIDEO",
+        numPoses: 1
+      });
+      return poseLandmarker;
+    })().catch((err) => {
+      poseLandmarkerPromise = null; // 실패하면 다음 시도 때 다시 불러올 수 있게 캐시 해제
+      throw err;
+    });
+  }
+  return poseLandmarkerPromise;
+}
+
 async function startRun() {
   runBtn.disabled = true;
   runBtn.textContent = "카메라 준비 중...";
@@ -987,6 +1064,7 @@ async function startRun() {
         minTrackingConfidence: 0.7
       });
     }
+    if (appMode === "arm") await ensurePoseLandmarker().catch(() => {}); // 실패해도 카메라 자체는 켜지게 (아래 renderLoop가 poseLandmarker null이면 알아서 건너뜀)
 
     const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
     video.srcObject = stream;
@@ -1000,6 +1078,8 @@ async function startRun() {
     runBtn.classList.add("running");
     calFlatBtn.disabled = false;
     calBentBtn.disabled = false;
+    armCalFlatBtn.disabled = false;
+    armCalBentBtn.disabled = false;
 
     requestAnimationFrame(renderLoop);
   } catch (err) {
@@ -1034,6 +1114,8 @@ function stopRun() {
   runBtn.classList.remove("running");
   calFlatBtn.disabled = true;
   calBentBtn.disabled = true;
+  armCalFlatBtn.disabled = true;
+  armCalBentBtn.disabled = true;
 }
 
 // ============================================================================
@@ -1057,7 +1139,12 @@ function renderLoop() {
     ctx.restore();
 
     const result = handLandmarker.detectForVideo(canvas, performance.now());
-    processResult(result);
+    // 팔 인식 모드일 때만 Pose 모델도 같이 돌린다 (다른 모드에서는 손 인식 하나로
+    // 충분하고, 매 프레임 모델을 하나 더 돌리는 연산 비용을 아끼기 위함).
+    const poseResult = appMode === "arm" && poseLandmarker
+      ? poseLandmarker.detectForVideo(canvas, performance.now())
+      : null;
+    processResult(result, poseResult);
   }
   requestAnimationFrame(renderLoop);
 }
@@ -1072,7 +1159,7 @@ function getRoleForHandedness(categoryName) {
   return trueSide === "Left" ? "source" : "actual";
 }
 
-function processResult(result) {
+function processResult(result, poseResult) {
   const now = performance.now();
   detectedThisFrame.source = false;
   detectedThisFrame.actual = false;
@@ -1127,12 +1214,42 @@ function processResult(result) {
     abortCapture("캡처 시간이 초과되었습니다. 왼손이 잘 보이도록 하고 다시 시도해주세요.");
   }
 
-  setStatusBadge(statusBadgeSource, detectedThisFrame.source, "source");
-  setStatusBadge(statusBadgeActual, detectedThisFrame.actual, "actual");
+  // ---- 팔 인식 (Pose Landmarker) -- "팔 인식" 모드일 때만 poseResult가 들어온다 ----
+  armDetectedThisFrame.source = false;
+  armDetectedThisFrame.actual = false;
+  if (poseResult && poseResult.landmarks && poseResult.landmarks.length > 0) {
+    processArmResult(poseResult);
+  }
+  if (!armDetectedThisFrame.actual) {
+    consecutiveMissArmActual += 1;
+    if (consecutiveMissArmActual >= HAND_LOSS_FRAMES_THRESHOLD) armLostSustained = true;
+  } else {
+    consecutiveMissArmActual = 0;
+    armLostSustained = false;
+  }
+  if (armSampling && now - armSampling.startedAt > SAMPLE_TIMEOUT_MS && armSampling.count < SAMPLE_TARGET) {
+    abortArmSampling("측정 시간이 초과되었습니다. 오른팔이 잘 보이도록 하고 다시 시도해주세요.");
+  }
 
-  updateFingerTable();
-  updateSourcePercent(); // 표시용 표는 없어졌지만, 실시간 왼손 연동이 이 계산에 의존하므로 계속 호출해야 함
-  currentAverage = computeAverage(latestPercent.actual);
+  // 팔 인식 모드에서는 손가락 표/평균 대신 팔 값을 쓴다 (아래 폐루프 제어부터는
+  // "팔 인식" 모드도 손가락 모드와 완전히 동일한 코드 경로 -- targetPercent/
+  // currentAverage 두 전역값만 팔 기준으로 채워주면 updateController() 이하
+  // 로직이 그대로 재사용된다).
+  if (appMode === "arm") {
+    setStatusBadge(statusBadgeSource, armDetectedThisFrame.source, "source");
+    setStatusBadge(statusBadgeActual, armDetectedThisFrame.actual, "actual");
+    currentAverage = armLatestPercent.actual;
+    // 팔 인식 모드는 별도 "시작/정지" 버튼 없이 모드에 들어와 있는 동안 항상
+    // 왼팔을 실시간으로 목표에 반영한다 (거울 모드의 "실시간 왼손 연동"과 동일한
+    // 개념을, 이 모드에서는 토글 없이 기본 동작으로 둔 것).
+    targetPercent = armLatestPercent.source;
+  } else {
+    setStatusBadge(statusBadgeSource, detectedThisFrame.source, "source");
+    setStatusBadge(statusBadgeActual, detectedThisFrame.actual, "actual");
+    updateFingerTable();
+    updateSourcePercent(); // 표시용 표는 없어졌지만, 실시간 왼손 연동이 이 계산에 의존하므로 계속 호출해야 함
+    currentAverage = computeAverage(latestPercent.actual);
+  }
 
   // "▶ 제어 시작"을 누르기 전까지는 캘리브레이션/캡처가 다 끝나 있어도 절대
   // 하드웨어로 아무것도 나가지 않는다. 예전에는 캘리브레이션이 완료되는
@@ -1156,8 +1273,12 @@ function processResult(result) {
     controllerIntensity = 0;
     successSince = null;
   } else {
+    // 팔 인식 모드는 위에서 이미 armLatestPercent 기준으로 armLostSustained를
+    // 갱신해뒀으므로, 여기서는 어느 쪽 "놓침" 플래그를 볼지만 모드에 따라 고른다.
+    const lostSustained = appMode === "arm" ? armLostSustained : handLostSustained;
+
     // ---- 안전 확인 (컨트롤러 계산보다 먼저: 트립되면 이번 tick에서 즉시 0으로) ----
-    const runtime = runtimeCheck(handLostSustained);
+    const runtime = runtimeCheck(lostSustained);
     if (!runtime.ok && !safetyTripped) {
       triggerEmergencyStop(runtime.reason);
     }
@@ -1165,14 +1286,15 @@ function processResult(result) {
     // 행동 보조 모드의 실시간 왼손 연동 -- 매 프레임 목표를 왼손의 지금 값으로
     // 갱신한다 (거울 모드 캡처처럼 한 번 얼리지 않음). 컨트롤러 상태는 안 건드리고
     // targetPercent/targetPerFinger만 바꾸므로, 아래 updateController()가 평소처럼
-    // 새 목표에 대해 오차/허용범위/유지 로직을 그대로 적용한다.
+    // 새 목표에 대해 오차/허용범위/유지 로직을 그대로 적용한다. (팔 인식 모드는
+    // targetPercent를 위에서 이미 매 프레임 직접 채웠으므로 여기선 손 전용 로직만.)
     if (liveMirrorActive) {
       updateLiveMirrorTarget();
     }
 
     // ---- 폐루프 제어 ----
     const prevState = controlState;
-    updateController(handLostSustained ? null : currentAverage, now);
+    updateController(lostSustained ? null : currentAverage, now);
     if (controlState !== prevState) logControl(`상태 변경: ${STATE_LABELS[prevState] || prevState} → ${STATE_LABELS[controlState] || controlState}`);
 
     if (controllerIntensity > 0) notifyStimStarted();
@@ -1259,6 +1381,107 @@ function drawSkeleton(landmarks, role) {
     ctx.arc(lm.x * w, lm.y * h, 4, 0, Math.PI * 2);
     ctx.fill();
   }
+}
+
+function drawArmSkeleton(shoulderPt, elbowPt, wristPt, role) {
+  const w = canvas.width, h = canvas.height;
+  const color = ROLE_COLORS[role];
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(shoulderPt.x * w, shoulderPt.y * h);
+  ctx.lineTo(elbowPt.x * w, elbowPt.y * h);
+  ctx.lineTo(wristPt.x * w, wristPt.y * h);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  for (const pt of [shoulderPt, elbowPt, wristPt]) {
+    ctx.beginPath();
+    ctx.arc(pt.x * w, pt.y * h, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ============================================================================
+// 팔 인식 (Pose Landmarker 결과 처리) -- "팔 인식" 모드 전용
+// ============================================================================
+// Pose Landmarker는 손처럼 손별로 배열이 나뉘어 나오지 않고, 한 사람의 몸 전체
+// (양팔 포함) 랜드마크가 한 번에 나온다. 그래서 손 인식의 "categoryName으로
+// source/actual 판정" 대신, 화면(미러링된 캔버스)에 더 왼쪽에 보이는 팔을
+// source(TARGET), 더 오른쪽에 보이는 팔을 actual(EMS)로 판정한다 -- 실제 거울을
+// 보는 것과 같은 방향 감각이라 더 직관적이기도 하다.
+function processArmResult(poseResult) {
+  const imageLandmarks = poseResult.landmarks[0];
+  const worldLandmarks = poseResult.worldLandmarks[0];
+  if (!imageLandmarks || !worldLandmarks) return;
+
+  const candidates = [POSE_ARM_A, POSE_ARM_B]
+    .map((idx) => ({
+      idx,
+      shoulderPt: imageLandmarks[idx.shoulder],
+      elbowPt: imageLandmarks[idx.elbow],
+      wristPt: imageLandmarks[idx.wrist]
+    }))
+    .filter((a) =>
+      a.shoulderPt && a.elbowPt && a.wristPt &&
+      (a.shoulderPt.visibility ?? 1) >= POSE_VISIBILITY_THRESHOLD &&
+      (a.elbowPt.visibility ?? 1) >= POSE_VISIBILITY_THRESHOLD &&
+      (a.wristPt.visibility ?? 1) >= POSE_VISIBILITY_THRESHOLD
+    );
+
+  if (candidates.length === 0) return;
+
+  // 두 팔이 다 보이면 x좌표로 왼쪽/오른쪽을 정렬해서 나눠주고, 한쪽만 보이면
+  // 화면 가운데(0.5) 기준으로 어느 쪽인지만 판단한다.
+  candidates.sort((a, b) => a.elbowPt.x - b.elbowPt.x);
+  const roles = candidates.length === 2
+    ? ["source", "actual"]
+    : [candidates[0].elbowPt.x < 0.5 ? "source" : "actual"];
+
+  candidates.forEach((arm, i) => {
+    const role = roles[i];
+    if (!role || armDetectedThisFrame[role]) return; // 이미 이번 프레임에 그 역할이 처리됨
+    armDetectedThisFrame[role] = true;
+
+    drawArmSkeleton(arm.shoulderPt, arm.elbowPt, arm.wristPt, role);
+
+    const rawBend = calculateArmBend(worldLandmarks, arm.idx.shoulder, arm.idx.elbow, arm.idx.wrist);
+    armLatestSmoothed[role] = armFilters[role].push(rawBend);
+    armLatestPercent[role] = percentFor("Arm", armLatestSmoothed[role]);
+
+    if (armSampling && role === "actual") {
+      armSampling.sum += rawBend;
+      armSampling.count += 1;
+      updateArmSamplingUI();
+      if (armSampling.count >= SAMPLE_TARGET) finishArmSampling();
+    }
+  });
+}
+
+// ---- 팔 초기값(펴짐/구부림) 측정 -- 손가락 캘리브레이션과 같은 방식, 값 하나뿐 ----
+function startArmSampling(mode) {
+  if (!isRunning || armSampling) return;
+  armSampling = { mode, sum: 0, count: 0, startedAt: performance.now() };
+  const label = mode === "flat" ? "펴짐" : "구부림";
+  logControl(`오른팔 ${label} 초기값 측정 시작 -- 그대로 유지하세요`);
+  showToast(`📏 오른팔 ${label} 초기값 측정 중... 팔을 그대로 유지하세요`, "ok", 2000);
+}
+function updateArmSamplingUI() {
+  if (!armSampling) return;
+  logControlProgress(`팔 초기값 측정 중... ${armSampling.count}/${SAMPLE_TARGET}`);
+}
+function finishArmSampling() {
+  const { mode, sum, count } = armSampling;
+  calibration[mode].Arm = sum / count;
+  saveCalibration();
+  armSampling = null;
+  const label = mode === "flat" ? "펴짐" : "구부림";
+  logControl(`팔 ${label} 초기값 측정 완료`);
+  showToast(`✅ 오른팔 ${label} 초기값 측정 완료`, "ok");
+}
+function abortArmSampling(message) {
+  armSampling = null;
+  showToast(`❌ 팔 초기값 측정 실패: ${message}`, "bad", 4000);
+  alert(message);
 }
 
 function drawRoleLabel(wrist, role) {
@@ -1752,6 +1975,7 @@ function setAppMode(mode) {
   if (liveMirrorActive) stopLiveMirror();
   if (runningActionKey) stopActionMode("모드 전환");
   if (personalizationRampActive) stopPersonalizationRamp("모드 전환");
+  if (armSampling) armSampling = null; // 팔 초기값 측정 중이었으면 중단 (알림 없이 조용히 취소)
   if (controlEnabled) {
     controlEnabled = false;
     resetStartControlButton();
@@ -1766,18 +1990,34 @@ function setAppMode(mode) {
   mirrorModeCard.style.display = mode === "mirror" ? "" : "none";
   actionModeCard.style.display = mode === "action" ? "" : "none";
   personalizationModeCard.style.display = mode === "personalization" ? "" : "none";
+  armModeCard.style.display = mode === "arm" ? "" : "none";
   modeMirrorBtn.classList.toggle("selected", mode === "mirror");
   modeActionBtn.classList.toggle("selected", mode === "action");
   modePersonalizationBtn.classList.toggle("selected", mode === "personalization");
+  modeArmBtn.classList.toggle("selected", mode === "arm");
 
   modeDescriptionText.innerHTML =
     mode === "mirror"
       ? "<b>거울 모드</b>: 행동 버튼(카메라로 오차를 계속 보정) 또는 실시간 왼손 연동으로 오른손을 목표에 맞춥니다."
       : mode === "action"
       ? "<b>행동 보조 모드</b>: 채널1/채널2에 직접 입력한 고정 전류를 그대로 내보냅니다 (카메라 오차 보정 없음)."
-      : "<b>개인화 모드</b>: 선택한 채널의 전류를 서서히 올리다가 키보드 A로 정지합니다 (역치/반응 확인용).";
+      : mode === "personalization"
+      ? "<b>개인화 모드</b>: 선택한 채널의 전류를 서서히 올리다가 키보드 A로 정지합니다 (역치/반응 확인용)."
+      : "<b>팔 인식 모드</b>: 왼팔의 팔꿈치 굽힘 정도를 실시간으로 오른팔 목표로 흘려보내고, 카메라로 측정한 오른팔의 실제 굽힘에 맞춰 자극 세기를 자동 조절합니다 (팔 버전 거울 모드).";
 
-  logControl(`모드 전환: ${mode === "mirror" ? "거울 모드" : mode === "action" ? "행동 보조 모드" : "개인화 모드"}`);
+  targetCompareLabel.textContent = mode === "arm" ? "TARGET (왼팔 · 실시간 연동)" : "TARGET (행동 선택 / 실시간 왼손 연동)";
+  actualCompareLabel.textContent = mode === "arm" ? "ACTUAL (오른팔 · 팔꿈치 굽힘)" : "ACTUAL (오른손 · 4손가락 평균)";
+
+  // 팔 인식 모드는 아직 모델을 안 불러왔을 수 있으니(perf를 위해 지연 로딩) 이
+  // 시점에 미리 불러오기 시작 -- 카메라 실행 버튼을 누르기 전에 미리 받아둔다.
+  if (mode === "arm" && !poseLandmarker) {
+    showToast("🦾 팔 인식 모델을 불러오는 중입니다...", "ok", 3000);
+    ensurePoseLandmarker()
+      .then(() => showToast("✅ 팔 인식 모델 준비 완료", "ok"))
+      .catch((err) => showToast("❌ 팔 인식 모델 로딩 실패: " + (err.message || err), "bad", 5000));
+  }
+
+  logControl(`모드 전환: ${mode === "mirror" ? "거울 모드" : mode === "action" ? "행동 보조 모드" : mode === "personalization" ? "개인화 모드" : "팔 인식 모드"}`);
 }
 
 // ============================================================================
@@ -2639,7 +2879,7 @@ function liveOutputAllowedByConfig() {
 function runtimeCheck(handLost) {
   if (!liveModeRequested) return { ok: true };
   if (!serialLink || !serialLink.isConnected()) return { ok: false, reason: "시리얼 연결이 끊어졌습니다." };
-  if (handLost) return { ok: false, reason: "오른손(ACTUAL)을 카메라가 놓쳤습니다." };
+  if (handLost) return { ok: false, reason: appMode === "arm" ? "오른팔(ACTUAL)을 카메라가 놓쳤습니다." : "오른손(ACTUAL)을 카메라가 놓쳤습니다." };
   if (continuousStimExceeded()) return { ok: false, reason: "최대 연속 자극 시간을 초과했습니다." };
   if (totalTimeExceeded()) return { ok: false, reason: "전체 실험 제한시간을 초과했습니다." };
   return { ok: true };

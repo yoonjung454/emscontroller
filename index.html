@@ -238,6 +238,7 @@
         <button class="preset selected" id="modeMirrorBtn">🪞 거울 모드</button>
         <button class="preset" id="modeActionBtn">🎬 행동 보조 모드</button>
         <button class="preset" id="modePersonalizationBtn">📈 개인화 모드</button>
+        <button class="preset" id="modeArmBtn">🦾 팔 인식 모드</button>
       </div>
       <p class="hint" id="modeDescriptionText" style="margin-top:8px;">
         <b>거울 모드</b>: 행동 버튼(카메라로 오차를 계속 보정) 또는 실시간 왼손 연동으로 오른손을 목표에 맞춥니다.
@@ -538,6 +539,38 @@
       </div>
     </div>
 
+    <div class="card" id="armModeCard" style="display:none;">
+      <h2>④ 팔 인식 모드 <span class="badge-note">실험적 -- 팔꿈치 굽힘 폐루프</span></h2>
+      <p class="hint">
+        거울 모드와 같은 원리를 손가락 대신 <b>팔꿈치 굽힘(어깨-팔꿈치-손목 각도)</b>에 적용합니다.
+        카메라에 양쪽 팔(어깨~손목)이 함께 보이면, <b>화면 왼쪽에 보이는 팔이 TARGET</b>, <b>화면
+        오른쪽에 보이는 팔이 ACTUAL(EMS 연결 대상)</b>입니다. 별도의 "시작" 버튼 없이, 이 모드에
+        들어와 있는 동안은 항상 실시간으로 왼팔의 굽힘 정도가 오른팔 목표로 계속 흘러갑니다
+        (거울 모드의 "실시간 왼손 연동"과 동일한 방식이 기본 동작입니다).
+      </p>
+      <div class="sub-section">
+        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">
+          팔 초기값 측정 (펴짐 / 구부림)
+        </div>
+        <p class="hint" style="margin-top:4px;">
+          손가락 캘리브레이션과는 별개로, 팔 전용 초기값이 하나 더 필요합니다. <b>오른팔</b>을
+          <b>쫙 편 상태</b>로 유지하고 ①, <b>팔꿈치를 최대한 구부린 상태</b>로 유지하고 ②를
+          눌러주세요 (30프레임 평균). 이 보정값은 왼팔 값을 %로 환산할 때도 동일하게 재사용됩니다
+          (두 팔의 유연성이 비슷하다고 가정 -- 손가락 캘리브레이션과 같은 방식).
+        </p>
+        <div class="btn-row" style="margin-top:8px;">
+          <button class="flat" id="armCalFlatBtn" disabled>① 팔 펴짐 초기값 측정</button>
+          <button class="bent" id="armCalBentBtn" disabled>② 팔 굽힘 초기값 측정</button>
+          <button class="reset" id="armResetBtn">팔 초기값 초기화</button>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:8px;">
+        ⚠️ 카메라가 어깨까지 보이도록 뒤로 물러나거나 화각을 넓혀야 합니다 (손가락 인식 때보다 더
+        넓은 화면이 필요합니다). 목표/실제/오차/자극값과 채널1(구부림)/채널2(폄) 자동 전환은 손가락
+        모드와 완전히 동일한 방식으로 아래 ⑤ 카드에서 그대로 확인·제어합니다.
+      </p>
+    </div>
+
     <div class="card">
       <h2>⑤ 목표 vs 실제 비교 &amp; 자극 제어 (실시간 모니터링)</h2>
       <div class="compare-grid">
@@ -546,7 +579,7 @@
           <div class="compare-value" id="targetValueDisplay">-</div>
         </div>
         <div class="compare-box">
-          <div class="compare-label">ACTUAL (오른손 · 4손가락 평균)</div>
+          <div class="compare-label" id="actualCompareLabel">ACTUAL (오른손 · 4손가락 평균)</div>
           <div class="compare-value" id="actualValueDisplay">-</div>
         </div>
         <div class="compare-box">
