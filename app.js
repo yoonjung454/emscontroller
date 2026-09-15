@@ -1545,7 +1545,10 @@ function processArmResult(poseResult) {
   // invertArmSides 체크박스로 뒤집는 방식으로 바꿨다 -- 움직여도 역할이 안 바뀐다.
   candidates.forEach((arm) => {
     const isArmA = arm.idx === POSE_ARM_A;
-    const role = invertArmSides ? (isArmA ? "actual" : "source") : (isArmA ? "source" : "actual");
+    // 손과 마찬가지로 미러링된 화면에서 Pose도 좌우가 기본적으로 뒤집혀 나와서
+    // (실측 확인됨), 기본값 자체를 반전시켜뒀다 -- invertArmSidesCheckbox는
+    // "한 번 더 뒤집기" 용도로 남겨둠 (카메라/환경이 바뀌어 다시 반대로 나오면 사용).
+    const role = invertArmSides ? (isArmA ? "source" : "actual") : (isArmA ? "actual" : "source");
     if (armDetectedThisFrame[role]) return; // 이미 이번 프레임에 그 역할이 처리됨 (정상적으론 안 생김)
     armDetectedThisFrame[role] = true;
 
