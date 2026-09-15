@@ -362,6 +362,14 @@ let armLostSustained = true; // ACTUAL(오른팔) 기준, "팔 인식" 모드의
 let armSampling = null; // 팔 초기값(펴짐/구부림) 측정 -- { mode, sum, count, startedAt }
 let invertArmSides = false; // POSE_ARM_A가 반대로(actual로) 인식되면 체크박스로 뒤집기 (invertHandedness와 동일한 개념)
 
+// 팔 인식 모드 전용 -- 손(채널1)/팔꿈치(채널2)를 동시에, 각각 독립적으로
+// 제어한다. 채널이 2개뿐이라 손/팔꿈치 각각 "펴는" 채널까지는 못 만들고,
+// 둘 다 "목표만큼 부족하면 조심스럽게 증가, 도달했으면 그 세기로 유지"만
+// 한다 (펴는 건 본인이 힘을 빼거나 중력에 맡김 -- 일부 EMS 보조기기가
+// 실제로 이렇게 그립/보조 전용으로만 동작한다).
+let armHandCtrl = { intensity: 0, state: "STANDBY", successSince: null };
+let armElbowCtrl = { intensity: 0, state: "STANDBY", successSince: null };
+
 const latestSmoothed = { source: {}, actual: {} }; // role -> finger -> degrees
 const latestPercent = { source: {}, actual: {} }; // role -> finger -> 0-100 | null
 
@@ -463,6 +471,8 @@ const armResetBtn = document.getElementById("armResetBtn");
 const armHandTargetDisplay = document.getElementById("armHandTargetDisplay");
 const armHandActualDisplay = document.getElementById("armHandActualDisplay");
 const armHandErrorDisplay = document.getElementById("armHandErrorDisplay");
+const armHandIntensityDisplay = document.getElementById("armHandIntensityDisplay");
+const armHandStateText = document.getElementById("armHandStateText");
 const invertArmSidesCheckbox = document.getElementById("invertArmSidesCheckbox");
 
 // 테스트 모드
@@ -1278,19 +1288,16 @@ function processResult(result, poseResult) {
   updateSourcePercent();
   const handAverage = computeAverage(latestPercent.actual);
 
+  const handTarget = latestPercent.source ? computeAverage(latestPercent.source) : null;
+
   if (appMode === "arm") {
     setStatusBadge(statusBadgeSource, armDetectedThisFrame.source, "source");
     setStatusBadge(statusBadgeActual, armDetectedThisFrame.actual, "actual");
+    // ⑤ 카드(공용 표시)는 팔꿈치(채널2)를 대표값으로 계속 보여준다. 손은
+    // 채널1 값으로 아래에서 따로(암모드카드 안) 표시한다.
     currentAverage = armLatestPercent.actual;
-    // 팔 인식 모드는 별도 "시작/정지" 버튼 없이 모드에 들어와 있는 동안 항상
-    // 왼팔을 실시간으로 목표에 반영한다 (거울 모드의 "실시간 왼손 연동"과 동일한
-    // 개념을, 이 모드에서는 토글 없이 기본 동작으로 둔 것).
     targetPercent = armLatestPercent.source;
 
-    // 손 굽힘은 참고용으로 같이 보여준다 -- 아직 채널을 구동하는 폐루프 목표는
-    // 팔꿈치 기준 그대로다 (손+팔꿈치를 동시에 채널로 제어하려면 2채널로는
-    // 부족해서 순차 단계식 설계가 별도로 필요함 -- 다음 작업에서 진행 예정).
-    const handTarget = latestPercent.source ? computeAverage(latestPercent.source) : null;
     armHandTargetDisplay.textContent = handTarget === null ? "-" : `${handTarget.toFixed(0)}%`;
     armHandActualDisplay.textContent = handAverage === null ? "-" : `${handAverage.toFixed(0)}%`;
     if (handTarget === null || handAverage === null) {
@@ -1311,7 +1318,43 @@ function processResult(result, poseResult) {
   // 하드웨어로 아무것도 나가지 않는다. 예전에는 캘리브레이션이 완료되는
   // 순간 이미 잡혀있던 목표와 바로 비교가 시작돼서 사용자가 누른 것도 없는데
   // 바로 자극이 나가는 문제가 있었다.
-  if (sweep) {
+  if (appMode === "arm") {
+    // ---- 팔 인식 모드 전용: 손(채널1)·팔꿈치(채널2) 독립 폐루프 ----
+    if (!controlEnabled) {
+      armHandCtrl.intensity = 0; armHandCtrl.state = "STANDBY"; armHandCtrl.successSince = null;
+      armElbowCtrl.intensity = 0; armElbowCtrl.state = "STANDBY"; armElbowCtrl.successSince = null;
+    } else {
+      const runtime = runtimeCheck(armLostSustained);
+      if (!runtime.ok && !safetyTripped) {
+        triggerEmergencyStop(runtime.reason);
+      }
+      if (armLostSustained) {
+        armHandCtrl.state = "WAITING_FOR_HAND";
+        armElbowCtrl.state = "WAITING_FOR_HAND";
+      } else {
+        stepFlexOnlyAxis(armHandCtrl, handTarget, handAverage, now);
+        stepFlexOnlyAxis(armElbowCtrl, armLatestPercent.source, armLatestPercent.actual, now);
+      }
+      if (armHandCtrl.intensity > 0 || armElbowCtrl.intensity > 0) notifyStimStarted();
+      else notifyStimStopped();
+    }
+
+    // ⑤ 카드가 읽는 공용 변수들을 팔꿈치(채널2) 기준으로 채워서 그대로 재사용.
+    activeChannel = 2;
+    controllerIntensity = armElbowCtrl.intensity;
+    controlState = armElbowCtrl.state;
+    lastError = (armLatestPercent.source !== null && armLatestPercent.actual !== null)
+      ? armLatestPercent.source - armLatestPercent.actual
+      : null;
+    armHandIntensityDisplay.textContent = Math.round(armHandCtrl.intensity);
+    armHandStateText.textContent = STATE_LABELS[armHandCtrl.state] || armHandCtrl.state;
+
+    if (controlEnabled && liveModeRequested && now - lastHardwareSendTime >= getControlPeriodMs()) {
+      lastHardwareSendTime = now;
+      driveArmHardwareIfNeeded(armHandCtrl.intensity, armElbowCtrl.intensity)
+        .catch((err) => logControl("하드웨어 전송 오류: " + err.message));
+    }
+  } else if (sweep) {
     // 개인화 캘리브레이션(자극값 스윕) 진행 중 -- 목표 추종 폐루프와는 완전히
     // 별개의 열린 루프라, 이 tick 동안은 그 로직을 건너뛰고 스윕만 진행한다.
     // (스윕을 시작할 때 controlEnabled를 이미 강제로 꺼뒀으므로 아래 하드웨어
@@ -1329,12 +1372,8 @@ function processResult(result, poseResult) {
     controllerIntensity = 0;
     successSince = null;
   } else {
-    // 팔 인식 모드는 위에서 이미 armLatestPercent 기준으로 armLostSustained를
-    // 갱신해뒀으므로, 여기서는 어느 쪽 "놓침" 플래그를 볼지만 모드에 따라 고른다.
-    const lostSustained = appMode === "arm" ? armLostSustained : handLostSustained;
-
     // ---- 안전 확인 (컨트롤러 계산보다 먼저: 트립되면 이번 tick에서 즉시 0으로) ----
-    const runtime = runtimeCheck(lostSustained);
+    const runtime = runtimeCheck(handLostSustained);
     if (!runtime.ok && !safetyTripped) {
       triggerEmergencyStop(runtime.reason);
     }
@@ -1342,15 +1381,14 @@ function processResult(result, poseResult) {
     // 행동 보조 모드의 실시간 왼손 연동 -- 매 프레임 목표를 왼손의 지금 값으로
     // 갱신한다 (거울 모드 캡처처럼 한 번 얼리지 않음). 컨트롤러 상태는 안 건드리고
     // targetPercent/targetPerFinger만 바꾸므로, 아래 updateController()가 평소처럼
-    // 새 목표에 대해 오차/허용범위/유지 로직을 그대로 적용한다. (팔 인식 모드는
-    // targetPercent를 위에서 이미 매 프레임 직접 채웠으므로 여기선 손 전용 로직만.)
+    // 새 목표에 대해 오차/허용범위/유지 로직을 그대로 적용한다.
     if (liveMirrorActive) {
       updateLiveMirrorTarget();
     }
 
     // ---- 폐루프 제어 ----
     const prevState = controlState;
-    updateController(lostSustained ? null : currentAverage, now);
+    updateController(handLostSustained ? null : currentAverage, now);
     if (controlState !== prevState) logControl(`상태 변경: ${STATE_LABELS[prevState] || prevState} → ${STATE_LABELS[controlState] || controlState}`);
 
     if (controllerIntensity > 0) notifyStimStarted();
@@ -1365,10 +1403,13 @@ function processResult(result, poseResult) {
   // 펄스를 HOLD_PULSE_PERIOD_MS(4초)마다 주는데, control_period_ms(6초)
   // 간격으로만 보내면 펄스의 켜짐/꺼짐 구간을 자주 놓쳐서 실제로는 전기가
   // 거의 안 나가게 된다. 그래서 LOCKED일 때는 훨씬 촘촘한 간격으로 보낸다.
-  const hardwareSendIntervalMs = holdLocked ? 400 : getControlPeriodMs();
-  if (controlEnabled && liveModeRequested && now - lastHardwareSendTime >= hardwareSendIntervalMs) {
-    lastHardwareSendTime = now;
-    driveHardwareIfNeeded(activeChannel, controllerIntensity).catch((err) => logControl("하드웨어 전송 오류: " + err.message));
+  // (팔 인식 모드는 위에서 이미 자체적으로 하드웨어 전송을 끝냈으므로 건너뛴다.)
+  if (appMode !== "arm") {
+    const hardwareSendIntervalMs = holdLocked ? 400 : getControlPeriodMs();
+    if (controlEnabled && liveModeRequested && now - lastHardwareSendTime >= hardwareSendIntervalMs) {
+      lastHardwareSendTime = now;
+      driveHardwareIfNeeded(activeChannel, controllerIntensity).catch((err) => logControl("하드웨어 전송 오류: " + err.message));
+    }
   }
 
   // ---- 기록 ----
@@ -1393,6 +1434,15 @@ function processResult(result, poseResult) {
 }
 
 function updateActiveChannelPill() {
+  if (appMode === "arm") {
+    // 팔 인식 모드는 손(채널1)/팔꿈치(채널2)가 항상 동시에 켜져 있고 둘 다
+    // "구부림 전용"이라, 거울모드의 구부림/폄 라벨이 안 맞는다. ⑤ 카드는
+    // 팔꿈치(채널2)를 대표로 보여주는 중이라는 걸 명시한다 (손은 위쪽
+    // "🖐 손 굽힘" 섹션에 따로 있음).
+    activeChannelPill.textContent = "채널2 (팔꿈치, 구부림 전용)";
+    activeChannelPill.className = "pill";
+    return;
+  }
   if (activeChannel === 1) {
     activeChannelPill.textContent = "채널1 (구부림)";
     activeChannelPill.className = "pill";
@@ -3049,6 +3099,51 @@ async function driveHardwareIfNeeded(channel, intensity) {
   const ttl = clampTtl(config.safety.commandTtlMs);
   await serialLink.setIntensity(channel, clampHardware(intensity), ttl);
   lastDrivenChannel = channel;
+}
+
+// ============================================================================
+// 팔 인식 모드 전용 폐루프 -- 손(채널1)과 팔꿈치(채널2)를 동시에 독립적으로
+// "부족하면 조심스럽게 증가, 도달했으면 유지"만 하는 단순 P제어. 손가락
+// 거울모드/일반 updateController()의 kpUp/maxStepUp 게인을 그대로 재사용한다
+// (펴는 채널이 없어서 kpDown/maxStepDown/채널전환 로직은 필요 없음 -- 그만큼
+// updateController()보다 훨씬 단순하다).
+// ============================================================================
+function stepFlexOnlyAxis(ctrl, targetPercent, currentPercent, now) {
+  if (targetPercent === null || currentPercent === null) {
+    ctrl.state = "WAITING_FOR_HAND";
+    ctrl.successSince = null;
+    return; // intensity는 건드리지 않음 -- 마지막 값 유지 (잠깐 놓친 것일 수 있어서)
+  }
+  const error = targetPercent - currentPercent;
+  if (error <= config.control.tolerancePercent) {
+    // 목표 도달(또는 이미 초과) -- 낮출 채널이 없으니 지금 세기를 그대로 유지.
+    if (ctrl.successSince === null) ctrl.successSince = now;
+    const heldForS = (now - ctrl.successSince) / 1000;
+    ctrl.state = heldForS >= config.control.successHoldSeconds ? "LOCKED" : "HOLDING";
+    return;
+  }
+  ctrl.successSince = null;
+  const step = Math.min(config.control.maxStepUp, config.control.kpUp * error);
+  ctrl.intensity = clampWorkingFloat(ctrl.intensity + step);
+  ctrl.state = "INCREASING";
+}
+
+// 손(채널1)·팔꿈치(채널2)를 매번 같이 보낸다 -- 거울모드의 driveHardwareIfNeeded와
+// 달리 "다른 채널을 먼저 끄는" 로직이 없다: 여기선 두 채널이 항상 동시에
+// 켜져 있는 게 정상이기 때문 (한쪽이 다른 쪽을 밀어내지 않음).
+async function driveArmHardwareIfNeeded(handIntensity, elbowIntensity) {
+  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) return;
+  const ttl = clampTtl(config.safety.commandTtlMs);
+  if (!armedCh1) {
+    const ok = await serialLink.arm(1);
+    if (ok) armedCh1 = true;
+  }
+  if (!armedCh2) {
+    const ok = await serialLink.arm(2);
+    if (ok) armedCh2 = true;
+  }
+  if (armedCh1) await serialLink.setIntensity(1, clampHardware(handIntensity), ttl);
+  if (armedCh2) await serialLink.setIntensity(2, clampHardware(elbowIntensity), ttl);
 }
 
 // ============================================================================

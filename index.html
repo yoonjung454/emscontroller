@@ -542,14 +542,16 @@
 
 
     <div class="card" id="armModeCard" style="display:none;">
-      <h2>④ 팔 인식 모드 <span class="badge-note">실험적 -- 팔꿈치 굽힘 폐루프</span></h2>
+      <h2>④ 팔 인식 모드 <span class="badge-note">실험적 -- 손+팔꿈치 동시 폐루프</span></h2>
       <p class="hint">
-        거울 모드와 같은 원리를 손가락 대신 <b>팔꿈치 굽힘(어깨-팔꿈치-손목 각도)</b>에 적용합니다.
-        카메라에 양쪽 팔(어깨~손목)이 함께 보이면, <b>화면 왼쪽에 보이는 팔이 TARGET</b>, <b>화면
-        오른쪽에 보이는 팔이 ACTUAL(EMS 연결 대상)</b>입니다. 별도의 "시작" 버튼 없이, 이 모드에
-        들어와 있는 동안은 항상 실시간으로 왼팔의 굽힘 정도가 오른팔 목표로 계속 흘러갑니다
-        (거울 모드의 "실시간 왼손 연동"과 동일한 방식이 기본 동작입니다). <b>채널 제어·목표/실제/
-        오차·자극값은 아래 ⑤ 카드에서 그대로 확인합니다</b> (팔꿈치 기준).
+        거울 모드와 같은 원리를 <b>손(채널1)과 팔꿈치(채널2)에 동시에</b> 적용합니다. 카메라에
+        양쪽 팔(어깨~손목)이 함께 보이면, <b>화면 왼쪽에 보이는 팔이 TARGET</b>, <b>화면 오른쪽에
+        보이는 팔이 ACTUAL(EMS 연결 대상)</b>입니다. 별도의 "시작" 버튼 없이, 이 모드에 들어와
+        있는 동안은 항상 실시간으로 왼쪽 손·팔꿈치의 굽힘 정도가 각각 오른쪽 목표로 계속
+        흘러갑니다 (거울 모드의 "실시간 왼손 연동"과 동일한 방식이 기본 동작입니다). 채널이
+        2개뿐이라 <b>둘 다 "구부리는 방향"으로만 제어</b>합니다 (펴는 건 힘을 빼거나 중력에
+        맡김). <b>팔꿈치(채널2) 쪽 목표/실제/오차/자극값은 아래 ⑤ 카드</b>, <b>손(채널1) 쪽은
+        바로 아래 섹션</b>에서 확인합니다.
       </p>
       <div class="checkbox-row">
         <input type="checkbox" id="invertArmSidesCheckbox" />
@@ -557,11 +559,12 @@
       </div>
 
       <div class="sub-section" style="margin-top:12px; padding-top:12px;">
-        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🖐 손 굽힘 (참고용)</div>
+        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🖐 손 굽힘 -- 채널1로 실제 제어</div>
         <p class="hint" style="margin-top:4px;">
-          팔꿈치와 별개로 손가락 굽힘도 같이 측정해서 보여줍니다. <b>아직 채널을 구동하지는
-          않고 참고 표시만 합니다</b> -- 손+팔꿈치를 동시에 채널로 제어하려면 순차 단계식
-          설계가 더 필요해서, 그 작업이 끝나면 여기도 실제 제어에 연결될 예정입니다.
+          팔꿈치(채널2)와 별개로, 손가락 굽힘도 <b>채널1로 동시에 실시간 제어</b>합니다. 왼손이
+          더 구부러져 있으면 채널1 세기가 조심스럽게 올라가고, 목표에 도달하면 그 세기를
+          유지합니다. <b>펴는 채널은 없어서</b>(2채널로는 손·팔꿈치 각각 폄까지 못 만듦),
+          목표보다 더 구부러져 있으면 그냥 유지만 하고 본인이 힘을 빼야 풀립니다.
         </p>
         <div class="compare-grid" style="margin-top:8px;">
           <div class="compare-box">
@@ -575,6 +578,16 @@
           <div class="compare-box">
             <div class="compare-label">오차</div>
             <div class="compare-value" id="armHandErrorDisplay" style="font-size:20px;">-</div>
+          </div>
+        </div>
+        <div class="stim-row" style="margin-top:8px;">
+          <div>
+            <div class="hint">채널1 EMS 세기 (손)</div>
+            <div class="stim-value" id="armHandIntensityDisplay" style="font-size:22px;">0</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="hint">손 상태</div>
+            <div class="state-line"><b id="armHandStateText">대기</b></div>
           </div>
         </div>
       </div>
