@@ -188,13 +188,16 @@ let testResendInterval = null; // 방향키를 누르고 있는 동안 재전송
 let runningActionKey = null; // null | "spoonLift" | "bicep"
 let actionModeInterval = null;
 
-// 개인화 모드(수동 램프업) 상태
-let personalizationRampActive = false;
-let personalizationRampChannel = 1;
-let personalizationRampIntensity = 0;
-let personalizationRampInterval = null;
-let personalizationRampLastResult = null; // 마지막으로 A키로 멈춘 세기 값 -- "안전 최대값으로 설정" 버튼이 사용
-const PERSONALIZATION_RAMP_TICK_MS = 500; // 이 주기마다 세기를 올리고 하드웨어로 재전송
+// 개인화 측정(목표 도달 세기 자동 탐색) 상태 -- "수동 램프업 + A키 정지" 방식은
+// 폐루프 실행(수저/이두)이 이미 목표%로 자동 세팅되면서 의미가 없어져 완전히
+// 대체됐다. 이제는 손 목표%/팔꿈치 목표%를 정해두면 전류를 자동으로 올려서
+// 각각 ±5% 안에 들어오는 순간 멈추고 그 세기를 기록 -- spoonLiftTick의 손 ->
+// 팔꿈치 순차 진행과 같은 원리를 재사용한다(실제로 같은 actionHandCtrl/
+// actionElbowCtrl을 그대로 씀 -- 어차피 이 측정과 실제 실행은 동시에 돌 수
+// 없으므로 상태를 공유해도 안전함).
+let personalizationCalActionKey = "spoonLift"; // "spoonLift" | "bicep" -- 지금 측정 결과를 저장할 행동
+let personalizationCalActive = false;
+let personalizationCalInterval = null;
 
 const DEFAULT_CONFIG = {
   presets: { light: 30, half: 60, strong: 90 },
@@ -505,7 +508,7 @@ const testIntensityCh1Input = document.getElementById("testIntensityCh1Input");
 const testIntensityCh2Input = document.getElementById("testIntensityCh2Input");
 const testModeStatusText = document.getElementById("testModeStatusText");
 
-// 행동 보조 모드 (오픈루프 고정 전류)
+// 행동 보조 모드 (목표 % 자동 세팅 폐루프)
 const spoonLiftHandTargetInput = document.getElementById("spoonLiftHandTargetInput");
 const spoonLiftElbowTargetInput = document.getElementById("spoonLiftElbowTargetInput");
 const spoonLiftBtn = document.getElementById("spoonLiftBtn");
@@ -529,15 +532,16 @@ const memberWelcomeText = document.getElementById("memberWelcomeText");
 const voiceCommandBtn = document.getElementById("voiceCommandBtn");
 const voiceCommandStatusText = document.getElementById("voiceCommandStatusText");
 
-// 개인화 모드 (수동 램프업)
-const personalizationCh1Radio = document.getElementById("personalizationCh1Radio");
-const personalizationCh2Radio = document.getElementById("personalizationCh2Radio");
-const personalizationRampStepInput = document.getElementById("personalizationRampStepInput");
-const personalizationRampBtn = document.getElementById("personalizationRampBtn");
-const personalizationRampValue = document.getElementById("personalizationRampValue");
-const personalizationRampStatusText = document.getElementById("personalizationRampStatusText");
-const personalizationRampResultText = document.getElementById("personalizationRampResultText");
-const personalizationApplyMaxBtn = document.getElementById("personalizationApplyMaxBtn");
+// 개인화 측정 (목표 도달 세기 자동 탐색)
+const calActionSpoonBtn = document.getElementById("calActionSpoonBtn");
+const calActionBicepBtn = document.getElementById("calActionBicepBtn");
+const calHandTargetInput = document.getElementById("calHandTargetInput");
+const calArmTargetInput = document.getElementById("calArmTargetInput");
+const calStartBtn = document.getElementById("calStartBtn");
+const calStatusText = document.getElementById("calStatusText");
+const calResultText = document.getElementById("calResultText");
+const spoonLiftSeedText = document.getElementById("spoonLiftSeedText");
+const bicepSeedText = document.getElementById("bicepSeedText");
 const maxContinuousInput = document.getElementById("maxContinuousInput");
 const totalExperimentInput = document.getElementById("totalExperimentInput");
 const resetExperimentTimerBtn = document.getElementById("resetExperimentTimerBtn");
@@ -713,11 +717,12 @@ memberIdInput.addEventListener("keydown", (e) => {
 memberRegisterBtn.addEventListener("click", registerMember);
 voiceCommandBtn.addEventListener("click", toggleVoiceCommand);
 
-personalizationRampBtn.addEventListener("click", () => {
-  if (personalizationRampActive) stopPersonalizationRamp("사용자가 정지 버튼을 눌렀습니다");
-  else startPersonalizationRamp();
+calActionSpoonBtn.addEventListener("click", () => selectPersonalizationCalAction("spoonLift"));
+calActionBicepBtn.addEventListener("click", () => selectPersonalizationCalAction("bicep"));
+calStartBtn.addEventListener("click", () => {
+  if (personalizationCalActive) stopPersonalizationCal("사용자가 정지 버튼을 눌렀습니다");
+  else startPersonalizationCal();
 });
-personalizationApplyMaxBtn.addEventListener("click", applyPersonalizationResultAsMax);
 // commandRunBtn.addEventListener("click", submitCommand);
 // commandInput.addEventListener("keydown", (e) => {
 //   if (e.key === "Enter") submitCommand();
@@ -822,9 +827,6 @@ window.addEventListener("keydown", (e) => {
   } else if (e.code === "Space" && !isTyping) {
     e.preventDefault();
     triggerEmergencyStop("키보드 비상정지 (SPACE)");
-  } else if ((e.key === "a" || e.key === "A") && !isTyping && personalizationRampActive) {
-    e.preventDefault();
-    stopPersonalizationRamp("사용자가 A 키를 눌러 정지");
   } else if (appMode === "test" && !isTyping && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
     e.preventDefault();
     testModeKeyDown(e.code === "ArrowLeft" ? 1 : 2);
@@ -849,7 +851,7 @@ document.addEventListener("visibilitychange", () => {
   // 행동 보조/개인화 모드는 카메라(isRunning)와 무관하게 setInterval로 계속
   // 돌 수 있으므로, 이 두 상태도 같이 확인한다. 테스트 모드는 방향키를 누르고
   // 있는 동안에만 나가므로 keyup 대신 즉시 채널을 끈다(전체 비상정지까지는 안 함).
-  if (document.hidden && (isRunning || runningActionKey || personalizationRampActive)) {
+  if (document.hidden && (isRunning || runningActionKey || personalizationCalActive)) {
     triggerEmergencyStop("브라우저 탭이 백그라운드로 전환됨");
   }
   if (document.hidden && appMode === "test" && testKeyChannel !== null) {
@@ -2159,7 +2161,7 @@ function setAppMode(mode) {
   // 다른 값을 계속 덮어쓰는 충돌이 생긴다 -- 그래서 모드가 바뀌면 무조건 다 끈다.
   if (liveMirrorActive) stopLiveMirror();
   if (runningActionKey) stopActionMode("모드 전환");
-  if (personalizationRampActive) stopPersonalizationRamp("모드 전환");
+  if (personalizationCalActive) stopPersonalizationCal("모드 전환");
   if (armSampling) armSampling = null; // 팔 초기값 측정 중이었으면 중단 (알림 없이 조용히 취소)
   testKeyChannel = null; // 테스트 모드에서 나가면서 방향키가 눌린 채로 남아있지 않게 확실히 정리
   if (testResendInterval) { clearInterval(testResendInterval); testResendInterval = null; }
@@ -2259,6 +2261,11 @@ function loadMember() {
   logControl(`👤 회원 불러오기: ${id} (${member.name})`);
   showToast(`✅ ${member.name}님 환영합니다`, "ok");
   flashButtonPress(memberLoadBtn, "✅ 불러옴!");
+
+  // 지금 개인화 측정 선택 상태(수저/이두)의 목표% 입력칸도 이 회원 값으로 갱신,
+  // 실행 버튼 아래 "저장된 세기" 안내도 갱신.
+  selectPersonalizationCalAction(personalizationCalActionKey);
+  updateActionSeedTexts();
 }
 
 function registerMember() {
@@ -2270,18 +2277,28 @@ function registerMember() {
   }
 
   const members = loadMembers();
+  // ⚠ 이전엔 매번 members[id] 전체를 새로 만들어서, 목표%만 고쳐서 "회원 등록"을
+  // 다시 눌러도 개인화 측정으로 찾아둔 handIntensity/elbowIntensity가 같이
+  // 지워졌다. 그 값들은 이 입력칸들과 무관하게(개인화 측정에서만) 채워지는
+  // 값이라, 기존 값을 먼저 읽어와 그대로 이어서 들고 간다.
+  const prevSpoon = members[id]?.actions?.spoonLift || {};
+  const prevBicep = members[id]?.actions?.bicep || {};
   members[id] = {
     name,
     actions: {
       spoonLift: {
         handTarget: Math.max(0, Math.min(100, Number(spoonLiftHandTargetInput.value) || 0)),
-        elbowTarget: Math.max(0, Math.min(100, Number(spoonLiftElbowTargetInput.value) || 0))
+        elbowTarget: Math.max(0, Math.min(100, Number(spoonLiftElbowTargetInput.value) || 0)),
+        handIntensity: prevSpoon.handIntensity ?? null,
+        elbowIntensity: prevSpoon.elbowIntensity ?? null
       },
       bicep: {
         handTarget: Math.max(0, Math.min(100, Number(bicepHandTargetInput.value) || 0)),
         elbowCurlTarget: Math.max(0, Math.min(100, Number(bicepElbowCurlTargetInput.value) || 0)),
         elbowReleaseTarget: Math.max(0, Math.min(100, Number(bicepElbowReleaseTargetInput.value) || 0)),
-        reps: Math.max(1, Math.min(100, Number(bicepRepsInput.value) || 5))
+        reps: Math.max(1, Math.min(100, Number(bicepRepsInput.value) || 5)),
+        handIntensity: prevBicep.handIntensity ?? null,
+        elbowIntensity: prevBicep.elbowIntensity ?? null
       }
     }
   };
@@ -2292,6 +2309,7 @@ function registerMember() {
   logControl(`👤 회원 등록/갱신: ${id} (${name})`);
   showToast(`✅ ${name}님 등록 완료`, "ok");
   flashButtonPress(memberRegisterBtn, "✅ 등록됨!");
+  updateActionSeedTexts();
 }
 
 // ============================================================================
@@ -2384,7 +2402,8 @@ function toggleVoiceCommand() {
 }
 
 // ============================================================================
-// 행동 보조 모드 (오픈루프 -- 채널1/채널2에 입력한 고정 전류를 그대로 출력)
+// 행동 보조 모드 (목표 % 자동 세팅 폐루프 -- 채널1/채널2에 고정 전류를 입력하지
+// 않고, 목표%만 정하면 카메라로 실시간 측정하며 세기를 자동으로 찾는다)
 // ============================================================================
 
 const ACTION_MODE_DEFS = {
@@ -2439,7 +2458,7 @@ async function startSpoonLiftClosedLoop() {
 
   // 개인화 측정이 켜진 채로 행동을 시작하면 같은 채널을 두고 서로 다른 값을
   // 계속 덮어쓰는 충돌이 생긴다 -- 행동을 시작하기 전에 먼저 확실히 끈다.
-  if (personalizationRampActive) stopPersonalizationRamp("행동 실행으로 전환");
+  if (personalizationCalActive) stopPersonalizationCal("행동 실행으로 전환");
 
   if (runningActionKey && runningActionKey !== key) {
     stopActionMode(`"${ACTION_MODE_DEFS[runningActionKey].label}"에서 "${def.label}"로 전환`);
@@ -2455,6 +2474,7 @@ async function startSpoonLiftClosedLoop() {
   const elbowTarget = Math.max(0, Math.min(100, Number(spoonLiftElbowTargetInput.value) || 0));
 
   resetActionAxisCtrls();
+  seedActionAxisCtrlsFromMember(key); // 회원의 개인화 측정값이 있으면 그 세기부터 시작(웜스타트)
   runningActionKey = key;
   def.btn.textContent = `■ ${def.label} 정지`;
   def.btn.classList.add("running");
@@ -2538,7 +2558,7 @@ async function startBicepClosedLoop() {
   const key = "bicep";
   const def = ACTION_MODE_DEFS[key];
 
-  if (personalizationRampActive) stopPersonalizationRamp("행동 실행으로 전환");
+  if (personalizationCalActive) stopPersonalizationCal("행동 실행으로 전환");
 
   if (runningActionKey && runningActionKey !== key) {
     stopActionMode(`"${ACTION_MODE_DEFS[runningActionKey].label}"에서 "${def.label}"로 전환`);
@@ -2556,6 +2576,7 @@ async function startBicepClosedLoop() {
   const reps = Math.max(1, Math.min(100, Number(bicepRepsInput.value) || 1));
 
   resetActionAxisCtrls();
+  seedActionAxisCtrlsFromMember(key); // 회원의 개인화 측정값이 있으면 그 세기부터 시작(웜스타트)
   runningActionKey = key;
   def.btn.textContent = "■ 이두운동 정지";
   def.btn.classList.add("running");
@@ -2664,107 +2685,152 @@ function stopActionMode(reason) {
 }
 
 // ============================================================================
-// 개인화 모드 (수동 램프업 -- 키보드 A로 정지)
+// 개인화 측정 (목표 도달 세기 자동 탐색) -- 손 -> 팔꿈치 순서로, 각각 목표
+// ±5% 안에 들어오는 순간 멈추고 그때의 세기를 기록한다. spoonLiftTick의 손 ->
+// 팔꿈치 순차 진행("도달하면 멈추고 다음으로")과 완전히 같은 원리라 그대로
+// 재사용 -- 실제 실행(수저/이두)과 이 측정은 절대 동시에 돌지 않으므로 같은
+// actionHandCtrl/actionElbowCtrl을 공유해도 안전하다.
 // ============================================================================
 
-function startPersonalizationRamp() {
-  if (personalizationRampActive) return;
+function selectPersonalizationCalAction(key) {
+  if (personalizationCalActive) {
+    showToast("⚠ 먼저 개인화 측정을 정지하세요", "warn");
+    return;
+  }
+  personalizationCalActionKey = key;
+  calActionSpoonBtn.classList.toggle("selected", key === "spoonLift");
+  calActionBicepBtn.classList.toggle("selected", key === "bicep");
+  // 선택한 행동이 지금 갖고 있는 목표%로 미리 채워준다 (수저=손/팔꿈치 목표,
+  // 이두=손/팔꿈치 "굽힘" 목표 -- 이완 목표는 측정 대상이 아님, 아래 참고).
+  if (key === "spoonLift") {
+    calHandTargetInput.value = spoonLiftHandTargetInput.value;
+    calArmTargetInput.value = spoonLiftElbowTargetInput.value;
+  } else {
+    calHandTargetInput.value = bicepHandTargetInput.value;
+    calArmTargetInput.value = bicepElbowCurlTargetInput.value;
+  }
+}
 
-  // 개인화 측정과 행동(수저/이두)이 이제 같은 "행동 보조 모드" 안에 같이 있어서,
-  // 서로 모르고 동시에 하드웨어를 건드리면 같은 채널을 두고 값이 계속 덮어써지는
+async function startPersonalizationCal() {
+  if (personalizationCalActive) return;
+
+  // 개인화 측정과 행동(수저/이두)이 같은 "행동 보조 모드" 안에 있어서, 서로
+  // 모르고 동시에 하드웨어를 건드리면 같은 채널을 두고 값이 계속 덮어써지는
   // 충돌이 생긴다 -- 시작하기 전에 실행 중인 행동을 먼저 확실히 끈다.
   if (runningActionKey) stopActionMode("개인화 측정 시작으로 전환");
 
-  const allowed = liveOutputAllowedByConfig();
-  if (!allowed.ok) {
-    showToast(`⚠ ${allowed.reason}`, "warn", 4000);
-    return;
-  }
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
-    showToast("⚠ Arduino가 연결되어 있지 않습니다", "warn");
-    return;
-  }
+  showToast("🎯 개인화 측정 준비 중...", "ok", 2000);
+  if (!(await ensureActionModeReady())) return;
 
-  const step = Math.max(1, Math.min(20, Number(personalizationRampStepInput.value) || 2));
+  const handTarget = Math.max(0, Math.min(100, Number(calHandTargetInput.value) || 0));
+  const armTarget = Math.max(0, Math.min(100, Number(calArmTargetInput.value) || 0));
 
-  // 개인화 램프는 도중에 한 번도 0으로 안 끊기고 계속 흐르기 때문에, 연속 자극
-  // 시간 제한(maxContinuousStimSeconds)이 너무 낮으면 100에 채 도달하기도
-  // 전에 매번 자동으로 끊길 수 있다. 미리 계산해서 그럴 것 같으면 경고한다
-  // (그래도 시작은 그대로 진행 -- 사람이 판단할 문제라 막지는 않음).
-  const secondsToReach100 = (100 / step) * (PERSONALIZATION_RAMP_TICK_MS / 1000);
-  if (secondsToReach100 > config.safety.maxContinuousStimSeconds) {
-    showToast(
-      `⚠ 연속 자극 시간 제한이 ${config.safety.maxContinuousStimSeconds}초라 100에 닿기 전(약 ${Math.ceil(secondsToReach100)}초 소요)에 자동 정지될 수 있어요 -- ③ 카드에서 늘려주세요`,
-      "warn",
-      5000
-    );
-  }
+  resetActionAxisCtrls(); // 측정은 정확한 값을 새로 찾는 과정이라 항상 0부터 시작(웜스타트 안 함)
+  personalizationCalActive = true;
+  calStartBtn.textContent = "■ 개인화 측정 정지";
+  calStartBtn.classList.add("running");
+  const label = ACTION_MODE_DEFS[personalizationCalActionKey].label;
+  logControl(`🎯 개인화 측정 시작 (${label}, 손 목표=${handTarget}%, 팔꿈치 목표=${armTarget}%)`);
+  showToast(`▶ 개인화 측정 시작 (${label}) -- 손부터 세기를 찾는 중`, "ok");
 
-  personalizationRampChannel = personalizationCh2Radio.checked ? 2 : 1;
-  personalizationRampIntensity = 0;
-  personalizationRampActive = true;
-  personalizationRampBtn.textContent = "■ 개인화 모드 정지";
-  personalizationRampBtn.classList.add("running");
-  personalizationRampStatusText.textContent = `채널${personalizationRampChannel} 증가 중 -- 키보드 A로 정지`;
-  personalizationRampValue.textContent = "0";
-  logControl(`📈 개인화 모드 시작 (채널${personalizationRampChannel})`);
-  showToast("📈 개인화 모드 시작 -- 원하는 지점에서 키보드 A를 누르세요", "ok");
-
-  personalizationRampInterval = setInterval(() => personalizationRampTick(step), PERSONALIZATION_RAMP_TICK_MS);
+  const state = { handTarget, armTarget, phase: "hand", handFound: null };
+  personalizationCalTick(state);
+  personalizationCalInterval = setInterval(() => personalizationCalTick(state), 400);
 }
 
-function personalizationRampTick(step) {
-  if (safetyTripped) {
-    stopPersonalizationRamp("안전 정지 상태");
-    return;
-  }
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
-    stopPersonalizationRamp("시리얼 연결 끊김");
-    return;
-  }
+function personalizationCalTick(state) {
+  if (safetyTripped) { stopPersonalizationCal("안전 정지 상태"); return; }
+  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) { stopPersonalizationCal("시리얼 연결 끊김"); return; }
   const allowed = liveOutputAllowedByConfig();
-  if (!allowed.ok) {
-    stopPersonalizationRamp(allowed.reason);
-    return;
-  }
-  if (continuousStimExceeded()) {
-    stopPersonalizationRamp("최대 연속 자극 시간을 초과했습니다");
-    return;
-  }
-  if (totalTimeExceeded()) {
-    stopPersonalizationRamp("전체 실험 제한시간을 초과했습니다");
-    return;
+  if (!allowed.ok) { stopPersonalizationCal(allowed.reason); return; }
+  if (continuousStimExceeded()) { stopPersonalizationCal("최대 연속 자극 시간을 초과했습니다"); return; }
+  if (totalTimeExceeded()) { stopPersonalizationCal("전체 실험 제한시간을 초과했습니다"); return; }
+
+  const now = performance.now();
+  const handAverage = computeAverage(latestPercent.actual);
+
+  if (handLostSustained || armLostSustained) {
+    actionHandCtrl.state = "WAITING_FOR_HAND";
+    actionElbowCtrl.state = "WAITING_FOR_HAND";
+    calStatusText.textContent = "손/팔 인식 대기 중";
+  } else if (state.phase === "hand") {
+    stepFlexOnlyAxis(actionHandCtrl, state.handTarget, handAverage, now);
+    calStatusText.textContent = `① 손 측정 중 -- 목표 ${state.handTarget}% (지금 ${Math.round(handAverage ?? 0)}%, 세기 ${Math.round(actionHandCtrl.intensity)})`;
+    if (actionHandCtrl.state === "LOCKED") {
+      state.handFound = Math.round(actionHandCtrl.intensity);
+      actionHandCtrl.intensity = 0; actionHandCtrl.state = "STANDBY"; actionHandCtrl.successSince = null;
+      state.phase = "arm";
+      logControl(`✅ 손 목표(${state.handTarget}%) 도달 -- 필요 세기 ${state.handFound} 기록, 팔꿈치 측정으로 진행`);
+      showToast(`✅ 손 세기 ${state.handFound} 찾음 -- 이어서 팔꿈치 측정`, "ok", 3000);
+    }
+  } else if (state.phase === "arm") {
+    actionHandCtrl.intensity = 0; actionHandCtrl.state = "STANDBY";
+    stepFlexOnlyAxis(actionElbowCtrl, state.armTarget, armLatestPercent.actual, now);
+    calStatusText.textContent = `② 팔꿈치 측정 중 -- 목표 ${state.armTarget}% (지금 ${Math.round(armLatestPercent.actual ?? 0)}%, 세기 ${Math.round(actionElbowCtrl.intensity)})`;
+    if (actionElbowCtrl.state === "LOCKED") {
+      finishPersonalizationCal(state, Math.round(actionElbowCtrl.intensity));
+      return;
+    }
   }
 
-  personalizationRampIntensity = Math.min(100, personalizationRampIntensity + step);
-  personalizationRampValue.textContent = Math.round(personalizationRampIntensity);
-  const ch1 = personalizationRampChannel === 1 ? personalizationRampIntensity : 0;
-  const ch2 = personalizationRampChannel === 2 ? personalizationRampIntensity : 0;
-  driveArmHardwareIfNeeded(ch1, ch2).catch((err) => logControl("개인화 모드 전송 오류: " + err.message));
-  notifyStimStarted();
-
-  if (personalizationRampIntensity >= 100) {
-    stopPersonalizationRamp("최대값(100)에 도달");
-  }
+  driveArmHardwareIfNeeded(actionHandCtrl.intensity, actionElbowCtrl.intensity)
+    .catch((err) => logControl("개인화 측정 전송 오류: " + err.message));
+  if (actionHandCtrl.intensity > 0 || actionElbowCtrl.intensity > 0) notifyStimStarted();
+  else notifyStimStopped();
 }
 
-function stopPersonalizationRamp(reason) {
-  if (personalizationRampInterval) {
-    clearInterval(personalizationRampInterval);
-    personalizationRampInterval = null;
+// 양쪽 다 찾은 뒤(정상 완료) 호출 -- 목표%/찾은 세기를 실행 버튼 입력칸과
+// (회원번호가 있으면) 회원 저장소에 반영하고 정지한다.
+function finishPersonalizationCal(state, armFound) {
+  const key = personalizationCalActionKey;
+  const label = ACTION_MODE_DEFS[key].label;
+  logControl(`🎯 개인화 측정 완료 (${label}): 손 세기 ${state.handFound}, 팔꿈치 세기 ${armFound}`);
+
+  // 실행 섹션의 목표% 입력칸에도 그대로 반영 -- 방금 측정한 목표를 실행할 때
+  // 다시 손으로 옮겨 적을 필요 없게.
+  if (key === "spoonLift") {
+    spoonLiftHandTargetInput.value = state.handTarget;
+    spoonLiftElbowTargetInput.value = state.armTarget;
+  } else {
+    bicepHandTargetInput.value = state.handTarget;
+    bicepElbowCurlTargetInput.value = state.armTarget;
   }
-  if (personalizationRampActive) {
-    const reached = Math.round(personalizationRampIntensity);
-    logControl(`⏹ 개인화 모드 정지: ${reason} (마지막 세기: ${reached})`);
-    personalizationRampResultText.innerHTML = `마지막 측정: 채널${personalizationRampChannel} · 세기 <b>${reached}</b> (${reason})`;
-    showToast(`⏹ 개인화 모드 정지 (세기 ${reached})`, "warn");
-    personalizationRampLastResult = reached;
-    personalizationApplyMaxBtn.disabled = false;
+
+  const id = memberIdInput.value.trim();
+  if (id) {
+    const members = loadMembers();
+    if (!members[id]) members[id] = { name: memberNameInput.value.trim() || id, actions: {} };
+    if (!members[id].actions[key]) members[id].actions[key] = {};
+    const rec = members[id].actions[key];
+    rec.handTarget = state.handTarget;
+    rec.handIntensity = state.handFound;
+    rec.elbowIntensity = armFound;
+    if (key === "spoonLift") rec.elbowTarget = state.armTarget;
+    else rec.elbowCurlTarget = state.armTarget;
+    saveMembers(members);
+    calResultText.innerHTML = `✅ <b>${id}</b>님(${label}) 저장 완료 -- 손 세기 <b>${state.handFound}</b> · 팔꿈치 세기 <b>${armFound}</b> (목표 손 ${state.handTarget}% / 팔꿈치 ${state.armTarget}%)`;
+    updateActionSeedTexts();
+  } else {
+    calResultText.innerHTML = `✅ 측정 완료(회원번호가 없어 저장은 안 됐습니다) -- 손 세기 <b>${state.handFound}</b> · 팔꿈치 세기 <b>${armFound}</b>`;
   }
-  personalizationRampActive = false;
-  personalizationRampBtn.textContent = "▶ 개인화 모드 시작";
-  personalizationRampBtn.classList.remove("running");
-  personalizationRampStatusText.textContent = "대기 중";
+  showToast("✅ 개인화 측정 완료", "ok", 4000);
+  stopPersonalizationCal(null);
+}
+
+function stopPersonalizationCal(reason) {
+  if (personalizationCalInterval) {
+    clearInterval(personalizationCalInterval);
+    personalizationCalInterval = null;
+  }
+  if (personalizationCalActive && reason) {
+    logControl(`⏹ 개인화 측정 정지: ${reason}`);
+    calResultText.textContent = `⏹ 측정이 완료되기 전에 정지됨: ${reason}`;
+  }
+  personalizationCalActive = false;
+  calStartBtn.textContent = "▶ 개인화 측정 시작";
+  calStartBtn.classList.remove("running");
+  calStatusText.textContent = "대기 중";
+  resetActionAxisCtrls();
   notifyStimStopped();
   if (serialLink) {
     serialLink.setIntensity(1, 0, 500).catch(() => {});
@@ -2772,22 +2838,34 @@ function stopPersonalizationRamp(reason) {
   }
 }
 
-// (예전엔 여기 savePersonalizationValue()가 있었다 -- 개인화 모드에서 잰 세기를
-// 수저/이두 채널 입력칸에 채워주는 기능. 그 입력칸들이 이제 "채널 전류"가 아니라
-// "목표 %"로 바뀌면서(폐루프가 알아서 세기를 찾음) 그 용도로는 의미가 없어져
-// 제거했었다. 그런데 이 측정 도구 자체(사람마다 "느껴지기 시작"/"참기 힘든" 세기를
-// 직접 찾는 것)는 여전히 쓸모가 있다 -- 폐루프는 카메라가 목표%에 도달할 때까지
-// 계속 세기를 올리기만 할 뿐, 그 사람이 아파하는지는 전혀 모르기 때문이다. 그래서
-// 측정한 값을 이번엔 "안전 최대값(config.safety.maxIntensity)"에 채워주는 용도로
-// 다시 연결했다 -- applyPersonalizationResultAsMax() 참고.)
-function applyPersonalizationResultAsMax() {
-  if (personalizationRampLastResult === null) return;
-  config.safety.maxIntensity = Math.max(0, Math.min(100, personalizationRampLastResult));
-  safetyMaxInput.value = config.safety.maxIntensity;
-  saveConfig();
-  updateSafetyPill();
-  logControl(`🛡 개인화 측정값(${config.safety.maxIntensity})을 안전 최대값으로 설정함`);
-  showToast(`✅ 안전 최대값을 ${config.safety.maxIntensity}로 설정했습니다`, "ok");
+// 회원번호 입력칸에 있는 회원의 저장된 세기를, 실행 버튼(spoonLift/bicep)이
+// 시작할 때 웜스타트로 쓸 수 있게 actionHandCtrl/actionElbowCtrl에 채워둔다
+// (개인화 측정으로 "이 목표%엔 세기가 얼마 필요한지" 미리 찾아뒀다면, 매번
+// 0부터 다시 찾지 않고 그 값부터 시작 -- 도달 속도가 훨씬 빨라진다).
+function seedActionAxisCtrlsFromMember(key) {
+  const id = memberIdInput.value.trim();
+  if (!id) return;
+  const rec = loadMembers()[id]?.actions?.[key];
+  if (!rec) return;
+  if (typeof rec.handIntensity === "number") actionHandCtrl.intensity = rec.handIntensity;
+  if (typeof rec.elbowIntensity === "number") actionElbowCtrl.intensity = rec.elbowIntensity;
+}
+
+// spoonLift/bicep 실행 섹션 아래 "저장된 세기" 안내 문구 갱신 -- 회원 불러오기/
+// 개인화 측정 완료 시점에 호출된다.
+function updateActionSeedTexts() {
+  const id = memberIdInput.value.trim();
+  const members = id ? loadMembers() : {};
+  const spoon = members[id]?.actions?.spoonLift;
+  const bicep = members[id]?.actions?.bicep;
+  spoonLiftSeedText.textContent =
+    spoon && typeof spoon.handIntensity === "number"
+      ? `저장된 세기: 손 ${spoon.handIntensity} · 팔꿈치 ${spoon.elbowIntensity} (실행 시 이 세기부터 시작)`
+      : "저장된 세기 없음 (0부터 자동 탐색)";
+  bicepSeedText.textContent =
+    bicep && typeof bicep.handIntensity === "number"
+      ? `저장된 세기: 손 ${bicep.handIntensity} · 팔꿈치 ${bicep.elbowIntensity} (실행 시 이 세기부터 시작)`
+      : "저장된 세기 없음 (0부터 자동 탐색)";
 }
 
 // ============================================================================
@@ -2996,7 +3074,7 @@ function triggerEmergencyStop(reason) {
   safetyTripReason = reason;
   forceZeroController(`🛑 안전 정지: ${reason}`);
   if (runningActionKey) stopActionMode(`🛑 안전 정지: ${reason}`);
-  if (personalizationRampActive) stopPersonalizationRamp(`🛑 안전 정지: ${reason}`);
+  if (personalizationCalActive) stopPersonalizationCal(`🛑 안전 정지: ${reason}`);
   if (serialLink) serialLink.stopAll().catch(() => {});
   armedCh1 = false;
   armedCh2 = false;
@@ -3017,7 +3095,7 @@ function resetAfterTrip() {
 }
 
 // safetyTripped는 한 번 true가 되면 이걸 풀기 전까지 모든 모드가 첫 틱에서
-// 바로 다시 꺼진다 (spoonLiftTick/bicepClosedLoopTick/personalizationRampTick의
+// 바로 다시 꺼진다 (spoonLiftTick/bicepClosedLoopTick/personalizationCalTick의
 // safetyTripped 체크 참고). 예전엔 이 상태가 화면 어디에도 안 보여서 "왜 자꾸 꺼지지?"의
 // 원인을 알 방법이 없었다 -- 지금은 ③ 카드 맨 위에 이유와 해제 버튼을 보여준다.
 function updateSafetyTripUi() {
