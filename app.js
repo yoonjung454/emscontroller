@@ -199,13 +199,13 @@ const DEFAULT_CONFIG = {
   presets: { light: 30, half: 60, strong: 90 },
   control: {
     // 오르는 속도(kpUp/maxStepUp)와 내리는 속도(kpDown/maxStepDown)를 동일하게
-    // 맞췄다. 중간값(0.017/0.85)도 "너무 느리다"고 해서 3배로 올렸다.
-    kpUp: 0.051,
-    kpDown: 0.051,
+    // 맞췄다. 중간값(0.017/0.85) -> 3배(0.051/2.55) -> 거기서 다시 2배.
+    kpUp: 0.102,
+    kpDown: 0.102,
     tolerancePercent: 5,
     successHoldSeconds: 1.5,
-    maxStepUp: 2.55,
-    maxStepDown: 2.55,
+    maxStepUp: 5.1,
+    maxStepDown: 5.1,
     controlPeriodMs: 6000 // 근육이 반응할 시간을 더 주기 위해 4초 -> 6초
   },
   safety: {
@@ -372,6 +372,11 @@ let invertArmSides = false; // POSE_ARM_A가 반대로(actual로) 인식되면 �
 // 실제로 이렇게 그립/보조 전용으로만 동작한다).
 let armHandCtrl = { intensity: 0, state: "STANDBY", successSince: null, lastStepTime: 0 };
 let armElbowCtrl = { intensity: 0, state: "STANDBY", successSince: null, lastStepTime: 0 };
+// 세기 "계산"은 getControlPeriodMs()(2400ms) 주기로 하지만, 그 값을 하드웨어로
+// "재전송"하는 건 훨씬 자주 해야 한다 -- SET의 TTL(기본 1500ms)보다 재전송
+// 간격이 길면 다음 전송이 오기 전에 아두이노가 자동으로 꺼버려서 자극이
+// 끊겼다 이어졌다 한다. TTL보다 충분히 짧게 잡는다.
+const ARM_HARDWARE_RESEND_MS = 600;
 
 // 행동 보조 모드(수저 들기 보조/이두운동)도 같은 stepFlexOnlyAxis 엔진을
 // 재사용하므로, 팔 인식 모드와 똑같은 모양의 축 상태를 따로 둔다 (동시에
@@ -1373,7 +1378,14 @@ function processResult(result, poseResult) {
     armHandIntensityDisplay.textContent = Math.round(armHandCtrl.intensity);
     armHandStateText.textContent = STATE_LABELS[armHandCtrl.state] || armHandCtrl.state;
 
-    if (controlEnabled && liveModeRequested && now - lastHardwareSendTime >= getControlPeriodMs()) {
+    // ⚠ 버그 수정: 여기서도 getControlPeriodMs()(2400ms) 간격으로만 보내고
+    // 있었는데, SET의 TTL(config.safety.commandTtlMs, 기본 1500ms)이 그보다
+    // 짧아서 다음 재전송이 오기 전에 아두이노가 먼저 자동으로 꺼버렸다 --
+    // "1초쯤 오다가 끊기고" 하던 증상의 원인. stepFlexOnlyAxis가 세기를
+    // "계산"하는 주기(getControlPeriodMs)와, 그 값을 하드웨어로 "재전송"해서
+    // TTL을 계속 갱신하는 주기(ARM_HARDWARE_RESEND_MS, TTL보다 훨씬 짧음)를
+    // 분리한다 -- LOCKED 상태일 때 400ms로 더 촘촘히 보내던 것과 같은 이유.
+    if (controlEnabled && liveModeRequested && now - lastHardwareSendTime >= ARM_HARDWARE_RESEND_MS) {
       lastHardwareSendTime = now;
       driveArmHardwareIfNeeded(armHandCtrl.intensity, armElbowCtrl.intensity)
         .catch((err) => logControl("하드웨어 전송 오류: " + err.message));
