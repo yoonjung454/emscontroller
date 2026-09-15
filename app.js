@@ -193,6 +193,7 @@ let personalizationRampActive = false;
 let personalizationRampChannel = 1;
 let personalizationRampIntensity = 0;
 let personalizationRampInterval = null;
+let personalizationRampLastResult = null; // 마지막으로 A키로 멈춘 세기 값 -- "안전 최대값으로 설정" 버튼이 사용
 const PERSONALIZATION_RAMP_TICK_MS = 500; // 이 주기마다 세기를 올리고 하드웨어로 재전송
 
 const DEFAULT_CONFIG = {
@@ -535,6 +536,7 @@ const personalizationRampBtn = document.getElementById("personalizationRampBtn")
 const personalizationRampValue = document.getElementById("personalizationRampValue");
 const personalizationRampStatusText = document.getElementById("personalizationRampStatusText");
 const personalizationRampResultText = document.getElementById("personalizationRampResultText");
+const personalizationApplyMaxBtn = document.getElementById("personalizationApplyMaxBtn");
 const maxContinuousInput = document.getElementById("maxContinuousInput");
 const totalExperimentInput = document.getElementById("totalExperimentInput");
 const resetExperimentTimerBtn = document.getElementById("resetExperimentTimerBtn");
@@ -714,6 +716,7 @@ personalizationRampBtn.addEventListener("click", () => {
   if (personalizationRampActive) stopPersonalizationRamp("사용자가 정지 버튼을 눌렀습니다");
   else startPersonalizationRamp();
 });
+personalizationApplyMaxBtn.addEventListener("click", applyPersonalizationResultAsMax);
 // commandRunBtn.addEventListener("click", submitCommand);
 // commandInput.addEventListener("keydown", (e) => {
 //   if (e.key === "Enter") submitCommand();
@@ -2753,6 +2756,8 @@ function stopPersonalizationRamp(reason) {
     logControl(`⏹ 개인화 모드 정지: ${reason} (마지막 세기: ${reached})`);
     personalizationRampResultText.innerHTML = `마지막 측정: 채널${personalizationRampChannel} · 세기 <b>${reached}</b> (${reason})`;
     showToast(`⏹ 개인화 모드 정지 (세기 ${reached})`, "warn");
+    personalizationRampLastResult = reached;
+    personalizationApplyMaxBtn.disabled = false;
   }
   personalizationRampActive = false;
   personalizationRampBtn.textContent = "▶ 개인화 모드 시작";
@@ -2767,8 +2772,21 @@ function stopPersonalizationRamp(reason) {
 
 // (예전엔 여기 savePersonalizationValue()가 있었다 -- 개인화 모드에서 잰 세기를
 // 수저/이두 채널 입력칸에 채워주는 기능. 그 입력칸들이 이제 "채널 전류"가 아니라
-// "목표 %"로 바뀌면서(폐루프가 알아서 세기를 찾음) 이 기능 자체가 의미가 없어져
-// 제거했다. "이 값을 저장할 곳" UI 카드도 같은 이유로 index.html에서 제거됨.)
+// "목표 %"로 바뀌면서(폐루프가 알아서 세기를 찾음) 그 용도로는 의미가 없어져
+// 제거했었다. 그런데 이 측정 도구 자체(사람마다 "느껴지기 시작"/"참기 힘든" 세기를
+// 직접 찾는 것)는 여전히 쓸모가 있다 -- 폐루프는 카메라가 목표%에 도달할 때까지
+// 계속 세기를 올리기만 할 뿐, 그 사람이 아파하는지는 전혀 모르기 때문이다. 그래서
+// 측정한 값을 이번엔 "안전 최대값(config.safety.maxIntensity)"에 채워주는 용도로
+// 다시 연결했다 -- applyPersonalizationResultAsMax() 참고.)
+function applyPersonalizationResultAsMax() {
+  if (personalizationRampLastResult === null) return;
+  config.safety.maxIntensity = Math.max(0, Math.min(100, personalizationRampLastResult));
+  safetyMaxInput.value = config.safety.maxIntensity;
+  saveConfig();
+  updateSafetyPill();
+  logControl(`🛡 개인화 측정값(${config.safety.maxIntensity})을 안전 최대값으로 설정함`);
+  showToast(`✅ 안전 최대값을 ${config.safety.maxIntensity}로 설정했습니다`, "ok");
+}
 
 // ============================================================================
 // 폐루프 제어기 (controller.py 를 JS로 포팅)
