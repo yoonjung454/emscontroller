@@ -1151,7 +1151,7 @@ async function startRun() {
         minTrackingConfidence: 0.7
       });
     }
-    if (appMode === "arm") await ensurePoseLandmarker().catch(() => {}); // 실패해도 카메라 자체는 켜지게 (아래 renderLoop가 poseLandmarker null이면 알아서 건너뜀)
+    if (appMode !== "mirror") await ensurePoseLandmarker().catch(() => {}); // 실패해도 카메라 자체는 켜지게 (아래 renderLoop가 poseLandmarker null이면 알아서 건너뜀)
 
     const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
     video.srcObject = stream;
@@ -1226,14 +1226,18 @@ function renderLoop() {
     ctx.restore();
 
     const result = handLandmarker.detectForVideo(canvas, performance.now());
-    // 팔꿈치 측정이 필요한 경우(팔 인식 모드, 테스트 모드, 또는 행동 보조
-    // 모드에서 폐루프 루틴이 실행 중일 때)만 Pose 모델도 같이 돌린다 -- 거울
-    // 모드는 손 하나로 충분해서 제외(매 프레임 모델을 하나 더 돌리는 연산
-    // 비용을 아낌). "거울 모드 제외 전부 팔 인식 가능하게" 요청으로 테스트
-    // 모드도 추가 -- 단, 테스트 모드는 여전히 카메라 없이도 방향키로 전류를
+    // 거울 모드만 손 인식 하나로 충분해서 Pose 모델을 끄고, 나머지(팔 인식/
+    // 행동 보조/테스트) 모드는 전부 Pose도 같이 돌린다 -- "거울 모드 제외
+    // 전부 팔 인식 가능하게" 요청.
+    // ⚠ 버그 수정: 행동 보조 모드는 원래 "runningActionKey !== null"(실행
+    // 버튼을 눌러 루틴이 실제로 돌고 있을 때)만 조건으로 걸어뒀었다. 그래서
+    // 행동 보조 모드 화면에 들어가기만 하고 아직 실행을 안 누른 상태에서는
+    // 팔 인식이 전혀 안 되는 것처럼 보였다(테스트 모드는 appMode 조건 하나뿐이라
+    // 바로 됐음) -- appMode === "action"도 무조건 켜지게 바꿔서 화면에 들어가는
+    // 즉시 팔 인식이 되게 함. 테스트 모드는 여전히 카메라 없이도 방향키로 전류를
     // 낼 수 있다(테스트 모드 키 입력은 이 값을 전혀 참조하지 않음); 켜져
     // 있으면 화면에 팔/손 인식 결과가 참고용으로 같이 보일 뿐이다.
-    const needsPose = (appMode === "arm" || appMode === "test" || runningActionKey !== null) && poseLandmarker;
+    const needsPose = (appMode === "arm" || appMode === "test" || appMode === "action") && poseLandmarker;
     const poseResult = needsPose
       ? poseLandmarker.detectForVideo(canvas, performance.now())
       : null;
@@ -2186,10 +2190,10 @@ function setAppMode(mode) {
   targetCompareLabel.textContent = mode === "arm" ? "TARGET (왼팔 · 실시간 연동)" : "TARGET (행동 선택 / 실시간 왼손 연동)";
   actualCompareLabel.textContent = mode === "arm" ? "ACTUAL (오른팔 · 팔꿈치 굽힘)" : "ACTUAL (오른손 · 4손가락 평균)";
 
-  // 팔 인식이 필요한 모드(팔 인식/테스트)는 아직 모델을 안 불러왔을 수 있으니
-  // (perf를 위해 지연 로딩) 이 시점에 미리 불러오기 시작 -- 카메라 실행 버튼을
-  // 누르기 전에 미리 받아둔다.
-  if ((mode === "arm" || mode === "test") && !poseLandmarker) {
+  // 팔 인식이 필요한 모드(팔 인식/행동 보조/테스트, 거울 모드 제외)는 아직
+  // 모델을 안 불러왔을 수 있으니(perf를 위해 지연 로딩) 이 시점에 미리
+  // 불러오기 시작 -- 카메라 실행 버튼을 누르기 전에 미리 받아둔다.
+  if (mode !== "mirror" && !poseLandmarker) {
     showToast("🦾 팔 인식 모델을 불러오는 중입니다...", "ok", 3000);
     ensurePoseLandmarker()
       .then(() => showToast("✅ 팔 인식 모델 준비 완료", "ok"))
