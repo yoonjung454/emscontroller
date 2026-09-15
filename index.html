@@ -548,8 +548,33 @@
         카메라에 양쪽 팔(어깨~손목)이 함께 보이면, <b>화면 왼쪽에 보이는 팔이 TARGET</b>, <b>화면
         오른쪽에 보이는 팔이 ACTUAL(EMS 연결 대상)</b>입니다. 별도의 "시작" 버튼 없이, 이 모드에
         들어와 있는 동안은 항상 실시간으로 왼팔의 굽힘 정도가 오른팔 목표로 계속 흘러갑니다
-        (거울 모드의 "실시간 왼손 연동"과 동일한 방식이 기본 동작입니다).
+        (거울 모드의 "실시간 왼손 연동"과 동일한 방식이 기본 동작입니다). <b>채널 제어·목표/실제/
+        오차·자극값은 아래 ⑤ 카드에서 그대로 확인합니다</b> (팔꿈치 기준).
       </p>
+
+      <div class="sub-section" style="margin-top:12px; padding-top:12px;">
+        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🖐 손 굽힘 (참고용)</div>
+        <p class="hint" style="margin-top:4px;">
+          팔꿈치와 별개로 손가락 굽힘도 같이 측정해서 보여줍니다. <b>아직 채널을 구동하지는
+          않고 참고 표시만 합니다</b> -- 손+팔꿈치를 동시에 채널로 제어하려면 순차 단계식
+          설계가 더 필요해서, 그 작업이 끝나면 여기도 실제 제어에 연결될 예정입니다.
+        </p>
+        <div class="compare-grid" style="margin-top:8px;">
+          <div class="compare-box">
+            <div class="compare-label">손 TARGET (왼손)</div>
+            <div class="compare-value" id="armHandTargetDisplay" style="font-size:20px;">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">손 ACTUAL (오른손)</div>
+            <div class="compare-value" id="armHandActualDisplay" style="font-size:20px;">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">오차</div>
+            <div class="compare-value" id="armHandErrorDisplay" style="font-size:20px;">-</div>
+          </div>
+        </div>
+      </div>
+
       <div class="sub-section">
         <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">
           팔 초기값 측정 (펴짐 / 구부림)
@@ -566,10 +591,11 @@
           <button class="reset" id="armResetBtn">팔 초기값 초기화</button>
         </div>
       </div>
+
       <p class="hint" style="margin-top:8px;">
         ⚠️ 카메라가 어깨까지 보이도록 뒤로 물러나거나 화각을 넓혀야 합니다 (손가락 인식 때보다 더
-        넓은 화면이 필요합니다). 목표/실제/오차/자극값과 채널1(구부림)/채널2(폄) 자동 전환은 손가락
-        모드와 완전히 동일한 방식으로 아래 ⑤ 카드에서 그대로 확인·제어합니다.
+        넓은 화면이 필요합니다). 손 굽힘 %가 "-"로 나오면 ② 초기값 측정(손가락 캘리브레이션)이
+        아직 안 된 것입니다.
       </p>
     </div>
 

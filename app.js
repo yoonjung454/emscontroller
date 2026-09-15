@@ -458,6 +458,9 @@ const liveMirrorBtn = document.getElementById("liveMirrorBtn");
 const armCalFlatBtn = document.getElementById("armCalFlatBtn");
 const armCalBentBtn = document.getElementById("armCalBentBtn");
 const armResetBtn = document.getElementById("armResetBtn");
+const armHandTargetDisplay = document.getElementById("armHandTargetDisplay");
+const armHandActualDisplay = document.getElementById("armHandActualDisplay");
+const armHandErrorDisplay = document.getElementById("armHandErrorDisplay");
 
 // 테스트 모드
 const testIntensityInput = document.getElementById("testIntensityInput");
@@ -1265,6 +1268,12 @@ function processResult(result, poseResult) {
   // "팔 인식" 모드도 손가락 모드와 완전히 동일한 코드 경로 -- targetPercent/
   // currentAverage 두 전역값만 팔 기준으로 채워주면 updateController() 이하
   // 로직이 그대로 재사용된다).
+  // 손가락 %는 모드와 무관하게 항상 갱신한다 -- 팔 인식 모드에서도 "참고용
+  // 손 굽힘" 표시가 필요해졌고, 원래도 실시간 왼손 연동 계산이 여기 의존한다.
+  updateFingerTable();
+  updateSourcePercent();
+  const handAverage = computeAverage(latestPercent.actual);
+
   if (appMode === "arm") {
     setStatusBadge(statusBadgeSource, armDetectedThisFrame.source, "source");
     setStatusBadge(statusBadgeActual, armDetectedThisFrame.actual, "actual");
@@ -1273,12 +1282,25 @@ function processResult(result, poseResult) {
     // 왼팔을 실시간으로 목표에 반영한다 (거울 모드의 "실시간 왼손 연동"과 동일한
     // 개념을, 이 모드에서는 토글 없이 기본 동작으로 둔 것).
     targetPercent = armLatestPercent.source;
+
+    // 손 굽힘은 참고용으로 같이 보여준다 -- 아직 채널을 구동하는 폐루프 목표는
+    // 팔꿈치 기준 그대로다 (손+팔꿈치를 동시에 채널로 제어하려면 2채널로는
+    // 부족해서 순차 단계식 설계가 별도로 필요함 -- 다음 작업에서 진행 예정).
+    const handTarget = latestPercent.source ? computeAverage(latestPercent.source) : null;
+    armHandTargetDisplay.textContent = handTarget === null ? "-" : `${handTarget.toFixed(0)}%`;
+    armHandActualDisplay.textContent = handAverage === null ? "-" : `${handAverage.toFixed(0)}%`;
+    if (handTarget === null || handAverage === null) {
+      armHandErrorDisplay.textContent = "-";
+      armHandErrorDisplay.style.color = "var(--text-dim)";
+    } else {
+      const handError = handTarget - handAverage;
+      armHandErrorDisplay.textContent = `${handError > 0 ? "+" : ""}${handError.toFixed(0)}%`;
+      armHandErrorDisplay.style.color = Math.abs(handError) <= config.control.tolerancePercent ? "var(--accent-2)" : "var(--warn)";
+    }
   } else {
     setStatusBadge(statusBadgeSource, detectedThisFrame.source, "source");
     setStatusBadge(statusBadgeActual, detectedThisFrame.actual, "actual");
-    updateFingerTable();
-    updateSourcePercent(); // 표시용 표는 없어졌지만, 실시간 왼손 연동이 이 계산에 의존하므로 계속 호출해야 함
-    currentAverage = computeAverage(latestPercent.actual);
+    currentAverage = handAverage;
   }
 
   // "▶ 제어 시작"을 누르기 전까지는 캘리브레이션/캡처가 다 끝나 있어도 절대
