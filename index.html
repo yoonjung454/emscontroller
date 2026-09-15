@@ -485,55 +485,53 @@
         <div class="state-line">상태: <b id="personalizationRampStatusText">대기 중</b></div>
         <p class="hint" id="personalizationRampResultText" style="margin-top:4px;">아직 측정된 값이 없습니다.</p>
 
-        <div class="sub-section">
-          <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">이 값을 저장할 곳</div>
-          <p class="hint" style="margin-top:4px;">
-            방금 잰 세기를 아래 채널 입력칸에 그대로 채워줍니다 (그 뒤 위쪽 "회원 등록"을 누르면
-            그 사람 값으로 저장됨). 위에서 고른 채널(1 또는 2) 기준으로 들어갑니다.
-          </p>
-          <div class="safety-row">
-            <label>행동 선택</label>
-            <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationTargetAction" id="personalizationTargetSpoon" value="spoonLift" checked /> 수저 들기 보조</label>
-            <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationTargetAction" id="personalizationTargetBicep" value="bicep" /> 이두운동</label>
-            <button class="primary" id="personalizationSaveBtn">💾 이 값 채널에 저장</button>
-          </div>
-        </div>
+        <p class="hint" style="margin-top:8px; color:var(--text-dim);">
+          ※ 아래 수저 들기 보조/이두운동은 이제 <b>목표 %(카메라 폐루프)</b> 방식이라, 여기서 잰
+          세기를 채널에 직접 저장하는 기능은 더 이상 쓰이지 않습니다 (아래에서 목표 %만 정하면
+          정확한 세기는 카메라가 알아서 찾아줍니다). 이 측정 도구는 "이 사람은 세기가 얼마 정도일
+          때 어떤 느낌인지" 확인하는 용도로만 남겨뒀습니다.
+        </p>
       </div>
 
       <div class="sub-section">
-        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🥄 수저 들기 보조</div>
+        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🥄 수저 들기 보조 <span class="badge-note">목표 % 자동 세팅</span></div>
         <p class="hint" style="margin-top:4px;">
-          동시에 올라가지 않습니다 -- <b>채널1이 먼저 2초에 걸쳐</b> 여기 입력한 값까지 서서히 올라가고,
-          그 값을 유지한 채로 <b>채널2가 이어서 3초에 걸쳐</b> 서서히 올라갑니다. 그 다음부터는 정지 버튼을
-          누르기 전까지 두 값 다 그대로 유지됩니다.
+          전류값을 직접 입력하지 않습니다 -- <b>손을 몇 % 굽혀서 쥘지</b>, <b>팔꿈치를 몇 % 굽혀서
+          들지</b>만 정하면, 카메라로 실시간 측정하면서 <b>그 사람에게 맞는 세기를 자동으로 찾아
+          도달·유지</b>합니다 (팔 인식 모드와 같은 원리 -- 채널1=손, 채널2=팔꿈치). 시작 전에
+          <b>② 초기값 측정(손)</b>과 <b>팔 인식 모드의 팔 초기값 측정</b>을 먼저 한 번씩 해두세요.
         </p>
         <div class="safety-row">
-          <label for="spoonLiftCh1Input">채널1 전류</label>
-          <input type="number" id="spoonLiftCh1Input" min="0" max="100" value="0" />
-          <label for="spoonLiftCh2Input">채널2 전류</label>
-          <input type="number" id="spoonLiftCh2Input" min="0" max="100" value="0" />
+          <label for="spoonLiftHandTargetInput">손 목표 %</label>
+          <input type="number" id="spoonLiftHandTargetInput" min="0" max="100" value="70" />
+          <label for="spoonLiftElbowTargetInput">팔꿈치 목표 %</label>
+          <input type="number" id="spoonLiftElbowTargetInput" min="0" max="100" value="50" />
           <button class="primary" id="spoonLiftBtn">▶ 수저 들기 보조 실행</button>
         </div>
+        <div class="state-line" style="margin-top:6px;">손: <b id="spoonLiftHandStateText">-</b> · 팔꿈치: <b id="spoonLiftElbowStateText">-</b></div>
       </div>
 
       <div class="sub-section">
-        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">💪 이두운동</div>
+        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">💪 이두운동 <span class="badge-note">목표 % 자동 세팅</span></div>
         <p class="hint" style="margin-top:4px;">
-          <b>채널1은 2초에 걸쳐 목표까지 오른 뒤 반복 내내(끝까지) 그대로 유지</b>됩니다. 그 상태에서
-          <b>채널2가 3초에 걸쳐 목표까지 올라가서 1초 유지</b>한 다음 다시 내려가는 걸 반복 횟수만큼
-          되풀이합니다 (채널1은 계속 유지). 내려가는 시간과 반복 사이 쉬는 시간은 명시가 없어서
-          우선 올라가는 시간과 대칭(3초)/짧은 휴식(0.5초)으로 뒀습니다 -- 원하면 값 알려주면 바꿀게요.
-          반복이 다 끝나면 자동으로 정지됩니다.
+          <b>손 목표 %</b>로 먼저 쥔 채 유지하고, 그 상태에서 <b>팔꿈치가 "굽힘 목표 %"까지 올라가서
+          잠깐 유지한 뒤 "이완 목표 %"까지 자동으로 내려가는 것</b>을 반복 횟수만큼 되풀이합니다.
+          각 단계는 정해진 시간이 아니라 <b>카메라가 실제로 그 %에 도달할 때까지</b> 자동으로
+          걸리는 시간만큼만 진행됩니다 (사람마다 다른 반응 속도에 자동으로 맞춰짐). 반복이 다
+          끝나면 자동으로 정지됩니다.
         </p>
         <div class="safety-row">
-          <label for="bicepCh1Input">채널1 전류</label>
-          <input type="number" id="bicepCh1Input" min="0" max="100" value="0" />
-          <label for="bicepCh2Input">채널2 전류</label>
-          <input type="number" id="bicepCh2Input" min="0" max="100" value="0" />
+          <label for="bicepHandTargetInput">손 목표 %</label>
+          <input type="number" id="bicepHandTargetInput" min="0" max="100" value="70" />
+          <label for="bicepElbowCurlTargetInput">팔꿈치 굽힘 목표 %</label>
+          <input type="number" id="bicepElbowCurlTargetInput" min="0" max="100" value="85" />
+          <label for="bicepElbowReleaseTargetInput">팔꿈치 이완 목표 %</label>
+          <input type="number" id="bicepElbowReleaseTargetInput" min="0" max="100" value="20" />
           <label for="bicepRepsInput">반복 횟수</label>
           <input type="number" id="bicepRepsInput" min="1" max="100" value="5" />
           <button class="primary" id="bicepBtn">▶ 이두운동 실행</button>
         </div>
+        <div class="state-line" style="margin-top:6px;">손: <b id="bicepHandStateText">-</b> · 팔꿈치: <b id="bicepElbowStateText">-</b></div>
       </div>
 
       <div class="state-line" style="margin-top:10px;">상태: <b id="actionModeStatusText">대기 중</b></div>

@@ -373,6 +373,12 @@ let invertArmSides = false; // POSE_ARM_A가 반대로(actual로) 인식되면 �
 let armHandCtrl = { intensity: 0, state: "STANDBY", successSince: null, lastStepTime: 0 };
 let armElbowCtrl = { intensity: 0, state: "STANDBY", successSince: null, lastStepTime: 0 };
 
+// 행동 보조 모드(수저 들기 보조/이두운동)도 같은 stepFlexOnlyAxis 엔진을
+// 재사용하므로, 팔 인식 모드와 똑같은 모양의 축 상태를 따로 둔다 (동시에
+// 두 모드가 같이 돌 일은 없지만, 상태가 서로 섞이지 않도록 분리).
+let actionHandCtrl = { intensity: 0, state: "STANDBY", successSince: null, lastStepTime: 0 };
+let actionElbowCtrl = { intensity: 0, state: "STANDBY", successSince: null, lastStepTime: 0 };
+
 const latestSmoothed = { source: {}, actual: {} }; // role -> finger -> degrees
 const latestPercent = { source: {}, actual: {} }; // role -> finger -> 0-100 | null
 
@@ -483,13 +489,18 @@ const testIntensityInput = document.getElementById("testIntensityInput");
 const testModeStatusText = document.getElementById("testModeStatusText");
 
 // 행동 보조 모드 (오픈루프 고정 전류)
-const spoonLiftCh1Input = document.getElementById("spoonLiftCh1Input");
-const spoonLiftCh2Input = document.getElementById("spoonLiftCh2Input");
+const spoonLiftHandTargetInput = document.getElementById("spoonLiftHandTargetInput");
+const spoonLiftElbowTargetInput = document.getElementById("spoonLiftElbowTargetInput");
 const spoonLiftBtn = document.getElementById("spoonLiftBtn");
-const bicepCh1Input = document.getElementById("bicepCh1Input");
-const bicepCh2Input = document.getElementById("bicepCh2Input");
+const spoonLiftHandStateText = document.getElementById("spoonLiftHandStateText");
+const spoonLiftElbowStateText = document.getElementById("spoonLiftElbowStateText");
+const bicepHandTargetInput = document.getElementById("bicepHandTargetInput");
+const bicepElbowCurlTargetInput = document.getElementById("bicepElbowCurlTargetInput");
+const bicepElbowReleaseTargetInput = document.getElementById("bicepElbowReleaseTargetInput");
 const bicepRepsInput = document.getElementById("bicepRepsInput");
 const bicepBtn = document.getElementById("bicepBtn");
+const bicepHandStateText = document.getElementById("bicepHandStateText");
+const bicepElbowStateText = document.getElementById("bicepElbowStateText");
 const actionModeStatusText = document.getElementById("actionModeStatusText");
 
 // 회원 개인화 (행동 보조 모드)
@@ -509,9 +520,6 @@ const personalizationRampBtn = document.getElementById("personalizationRampBtn")
 const personalizationRampValue = document.getElementById("personalizationRampValue");
 const personalizationRampStatusText = document.getElementById("personalizationRampStatusText");
 const personalizationRampResultText = document.getElementById("personalizationRampResultText");
-const personalizationTargetSpoon = document.getElementById("personalizationTargetSpoon");
-const personalizationTargetBicep = document.getElementById("personalizationTargetBicep");
-const personalizationSaveBtn = document.getElementById("personalizationSaveBtn");
 const maxContinuousInput = document.getElementById("maxContinuousInput");
 const totalExperimentInput = document.getElementById("totalExperimentInput");
 const resetExperimentTimerBtn = document.getElementById("resetExperimentTimerBtn");
@@ -677,8 +685,8 @@ modeActionBtn.addEventListener("click", () => setAppMode("action"));
 modeArmBtn.addEventListener("click", () => setAppMode("arm"));
 modeTestBtn.addEventListener("click", () => setAppMode("test"));
 
-spoonLiftBtn.addEventListener("click", () => startSequentialRamp("spoonLift", 2000, 3000));
-bicepBtn.addEventListener("click", startBicepRoutine);
+spoonLiftBtn.addEventListener("click", () => startSpoonLiftClosedLoop());
+bicepBtn.addEventListener("click", () => startBicepClosedLoop());
 
 memberLoadBtn.addEventListener("click", loadMember);
 memberIdInput.addEventListener("keydown", (e) => {
@@ -691,8 +699,6 @@ personalizationRampBtn.addEventListener("click", () => {
   if (personalizationRampActive) stopPersonalizationRamp("사용자가 정지 버튼을 눌렀습니다");
   else startPersonalizationRamp();
 });
-personalizationSaveBtn.addEventListener("click", savePersonalizationValue);
-
 // commandRunBtn.addEventListener("click", submitCommand);
 // commandInput.addEventListener("keydown", (e) => {
 //   if (e.key === "Enter") submitCommand();
@@ -1196,9 +1202,11 @@ function renderLoop() {
     ctx.restore();
 
     const result = handLandmarker.detectForVideo(canvas, performance.now());
-    // 팔 인식 모드일 때만 Pose 모델도 같이 돌린다 (다른 모드에서는 손 인식 하나로
-    // 충분하고, 매 프레임 모델을 하나 더 돌리는 연산 비용을 아끼기 위함).
-    const poseResult = appMode === "arm" && poseLandmarker
+    // 팔꿈치 측정이 필요한 경우(팔 인식 모드, 또는 행동 보조 모드에서 폐루프
+    // 루틴이 실행 중일 때)만 Pose 모델도 같이 돌린다 -- 다른 모드에서는 손 인식
+    // 하나로 충분하고, 매 프레임 모델을 하나 더 돌리는 연산 비용을 아낀다.
+    const needsPose = (appMode === "arm" || runningActionKey !== null) && poseLandmarker;
+    const poseResult = needsPose
       ? poseLandmarker.detectForVideo(canvas, performance.now())
       : null;
     processResult(result, poseResult);
@@ -2191,16 +2199,17 @@ function loadMember() {
   memberNameInput.value = member.name || "";
   const a = member.actions || {};
   if (a.spoonLift) {
-    spoonLiftCh1Input.value = a.spoonLift.ch1 ?? 0;
-    spoonLiftCh2Input.value = a.spoonLift.ch2 ?? 0;
+    spoonLiftHandTargetInput.value = a.spoonLift.handTarget ?? 70;
+    spoonLiftElbowTargetInput.value = a.spoonLift.elbowTarget ?? 50;
   }
   if (a.bicep) {
-    bicepCh1Input.value = a.bicep.ch1 ?? 0;
-    bicepCh2Input.value = a.bicep.ch2 ?? 0;
+    bicepHandTargetInput.value = a.bicep.handTarget ?? 70;
+    bicepElbowCurlTargetInput.value = a.bicep.elbowCurlTarget ?? 85;
+    bicepElbowReleaseTargetInput.value = a.bicep.elbowReleaseTarget ?? 20;
     bicepRepsInput.value = a.bicep.reps ?? 5;
   }
 
-  memberWelcomeText.textContent = `✅ ${member.name}님 환영합니다 -- 저장된 채널값을 불러왔습니다.`;
+  memberWelcomeText.textContent = `✅ ${member.name}님 환영합니다 -- 저장된 목표 %를 불러왔습니다.`;
   memberWelcomeText.style.color = "var(--accent-2)";
   logControl(`👤 회원 불러오기: ${id} (${member.name})`);
   showToast(`✅ ${member.name}님 환영합니다`, "ok");
@@ -2220,19 +2229,20 @@ function registerMember() {
     name,
     actions: {
       spoonLift: {
-        ch1: Math.max(0, Math.min(100, Number(spoonLiftCh1Input.value) || 0)),
-        ch2: Math.max(0, Math.min(100, Number(spoonLiftCh2Input.value) || 0))
+        handTarget: Math.max(0, Math.min(100, Number(spoonLiftHandTargetInput.value) || 0)),
+        elbowTarget: Math.max(0, Math.min(100, Number(spoonLiftElbowTargetInput.value) || 0))
       },
       bicep: {
-        ch1: Math.max(0, Math.min(100, Number(bicepCh1Input.value) || 0)),
-        ch2: Math.max(0, Math.min(100, Number(bicepCh2Input.value) || 0)),
+        handTarget: Math.max(0, Math.min(100, Number(bicepHandTargetInput.value) || 0)),
+        elbowCurlTarget: Math.max(0, Math.min(100, Number(bicepElbowCurlTargetInput.value) || 0)),
+        elbowReleaseTarget: Math.max(0, Math.min(100, Number(bicepElbowReleaseTargetInput.value) || 0)),
         reps: Math.max(1, Math.min(100, Number(bicepRepsInput.value) || 5))
       }
     }
   };
   saveMembers(members);
 
-  memberWelcomeText.textContent = `✅ ${name}님(${id}) 등록/저장 완료 -- 지금 입력칸의 값으로 저장했습니다.`;
+  memberWelcomeText.textContent = `✅ ${name}님(${id}) 등록/저장 완료 -- 지금 입력칸의 목표 %로 저장했습니다.`;
   memberWelcomeText.style.color = "var(--accent-2)";
   logControl(`👤 회원 등록/갱신: ${id} (${name})`);
   showToast(`✅ ${name}님 등록 완료`, "ok");
@@ -2303,11 +2313,11 @@ function handleVoiceCommand(transcript) {
   if (text.includes("수저") || text.includes("숟가락")) {
     voiceCommandStatusText.textContent = `✅ 인식됨: "수저 들기 보조" → 시작합니다`;
     speak("수저 들기 보조를 시작합니다");
-    startSequentialRamp("spoonLift", 2000, 3000);
+    startSpoonLiftClosedLoop();
   } else if (text.includes("이두")) {
     voiceCommandStatusText.textContent = `✅ 인식됨: "이두운동" → 시작합니다`;
     speak("이두운동을 시작합니다");
-    startBicepRoutine();
+    startBicepClosedLoop();
   } else {
     voiceCommandStatusText.textContent = `❓ "${transcript}" -- "수저들기보조" 또는 "이두운동"만 인식합니다.`;
     speak("명령을 이해하지 못했습니다");
@@ -2333,44 +2343,53 @@ function toggleVoiceCommand() {
 // ============================================================================
 
 const ACTION_MODE_DEFS = {
-  spoonLift: { label: "수저 들기 보조", ch1Input: spoonLiftCh1Input, ch2Input: spoonLiftCh2Input, btn: spoonLiftBtn },
-  bicep: { label: "이두운동", ch1Input: bicepCh1Input, ch2Input: bicepCh2Input, btn: bicepBtn }
+  spoonLift: { label: "수저 들기 보조", btn: spoonLiftBtn },
+  bicep: { label: "이두운동", btn: bicepBtn }
 };
 
-// 거울 모드의 activeChannel(채널 1개만 표현 가능)과 달리, 여기는 채널1/채널2를
-// 동시에 서로 다른 값으로 켤 수 있다 (한 행동이 두 근육을 동시에 쓸 수 있으므로).
-async function driveActionChannels(ch1Intensity, ch2Intensity) {
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) return;
-  const ttl = clampTtl(config.safety.commandTtlMs);
-
-  if (ch1Intensity > 0) {
-    if (!armedCh1) {
-      const ok = await serialLink.arm(1);
-      if (ok) armedCh1 = true;
-    }
-    if (armedCh1) await serialLink.setIntensity(1, clampHardware(ch1Intensity), ttl);
-  } else if (armedCh1) {
-    await serialLink.setIntensity(1, 0, 500);
-  }
-
-  if (ch2Intensity > 0) {
-    if (!armedCh2) {
-      const ok = await serialLink.arm(2);
-      if (ok) armedCh2 = true;
-    }
-    if (armedCh2) await serialLink.setIntensity(2, clampHardware(ch2Intensity), ttl);
-  } else if (armedCh2) {
-    await serialLink.setIntensity(2, 0, 500);
-  }
+// 손가락 캘리브레이션(isCalibrated())과 팔 캘리브레이션(calibration.*.Arm)이
+// 둘 다 끝나야 손/팔꿈치 % 변환이 다 가능해서 폐루프를 시작할 수 있다.
+function actionCalibrationReady() {
+  const armFlat = calibration.flat.Arm, armBent = calibration.bent.Arm;
+  const armOk = armFlat !== undefined && armBent !== undefined && Math.abs(armBent - armFlat) >= MIN_CAL_GAP_DEG;
+  return isCalibrated() && armOk;
 }
 
-// 순차 램프업 -- 두 채널을 동시에 목표까지 올리는 게 아니라 채널1 먼저, 채널2
-// 나중에 순서대로 올린다 (행동마다 채널별로 걸리는 시간이 다를 수 있어서
-// ch1RampMs/ch2RampMs를 인자로 받는다):
-//   0 ~ ch1RampMs: 채널1이 0에서 목표까지 서서히 올라감 (채널2는 0)
-//   ch1RampMs ~ ch1RampMs+ch2RampMs: 채널1은 목표값 유지, 채널2가 0에서 목표까지 서서히
-//   그 이후: 둘 다 목표값 유지, 정지 버튼(또는 다시 누르기)을 누르기 전까지 계속
-async function startSequentialRamp(key, ch1RampMs, ch2RampMs) {
+function resetActionAxisCtrls() {
+  actionHandCtrl.intensity = 0; actionHandCtrl.state = "STANDBY"; actionHandCtrl.successSince = null; actionHandCtrl.lastStepTime = 0;
+  actionElbowCtrl.intensity = 0; actionElbowCtrl.state = "STANDBY"; actionElbowCtrl.successSince = null; actionElbowCtrl.lastStepTime = 0;
+}
+
+// 시작 전 공통 확인(연결/안전값/캘리브레이션) + 팔 인식 모델 로딩까지 기다림.
+// 실패하면 이유를 토스트로 띄우고 false를 반환한다.
+async function ensureActionModeReady() {
+  const allowed = liveOutputAllowedByConfig();
+  if (!allowed.ok) {
+    showToast(`⚠ ${allowed.reason}`, "warn", 4000);
+    return false;
+  }
+  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
+    showToast("⚠ Arduino가 연결되어 있지 않습니다", "warn");
+    return false;
+  }
+  if (!actionCalibrationReady()) {
+    showToast("⚠ 먼저 ② 초기값 측정(손)과 팔 인식 모드의 '팔 초기값 측정'을 끝내주세요", "warn", 5000);
+    return false;
+  }
+  try {
+    await ensurePoseLandmarker();
+  } catch (err) {
+    showToast("❌ 팔 인식 모델 로딩 실패: " + (err.message || err), "bad", 5000);
+    return false;
+  }
+  return true;
+}
+
+// ============================================================================
+// 🥄 수저 들기 보조 -- 손 목표 %와 팔꿈치 목표 %를 동시에 폐루프로 도달·유지
+// ============================================================================
+async function startSpoonLiftClosedLoop() {
+  const key = "spoonLift";
   const def = ACTION_MODE_DEFS[key];
 
   // 개인화 측정이 켜진 채로 행동을 시작하면 같은 채널을 두고 서로 다른 값을
@@ -2384,105 +2403,65 @@ async function startSequentialRamp(key, ch1RampMs, ch2RampMs) {
     return;
   }
 
-  const allowed = liveOutputAllowedByConfig();
-  if (!allowed.ok) {
-    showToast(`⚠ ${allowed.reason}`, "warn", 4000);
-    return;
-  }
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
-    showToast("⚠ Arduino가 연결되어 있지 않습니다", "warn");
-    return;
-  }
+  showToast("🎬 수저 들기 보조 준비 중...", "ok", 2000);
+  if (!(await ensureActionModeReady())) return;
 
-  const ch1Target = Math.max(0, Math.min(100, Number(def.ch1Input.value) || 0));
-  const ch2Target = Math.max(0, Math.min(100, Number(def.ch2Input.value) || 0));
-  if (ch1Target === 0 && ch2Target === 0) {
-    showToast("⚠ 채널1/채널2 전류를 0보다 크게 입력하세요", "warn");
-    return;
-  }
-  const totalRampS = (ch1RampMs + ch2RampMs) / 1000;
-  if (config.safety.maxContinuousStimSeconds < totalRampS) {
-    showToast(
-      `⚠ 연속 자극 시간 제한이 ${config.safety.maxContinuousStimSeconds}초라 램프업(최소 ${totalRampS}초) 도중 자동 정지될 수 있어요 -- ③ 카드에서 늘려주세요`,
-      "warn",
-      5000
-    );
-  }
+  const handTarget = Math.max(0, Math.min(100, Number(spoonLiftHandTargetInput.value) || 0));
+  const elbowTarget = Math.max(0, Math.min(100, Number(spoonLiftElbowTargetInput.value) || 0));
 
+  resetActionAxisCtrls();
   runningActionKey = key;
   def.btn.textContent = `■ ${def.label} 정지`;
   def.btn.classList.add("running");
-  logControl(
-    `🎬 행동 보조 모드: ${def.label} 시작 (채널1 목표=${ch1Target} · ${ch1RampMs / 1000}초, 채널2 목표=${ch2Target} · ${ch2RampMs / 1000}초, 순차 램프업)`
-  );
-  showToast(`▶ ${def.label} 실행 (채널1→채널2 순서로 서서히)`, "ok");
+  logControl(`🎬 행동 보조 모드: ${def.label} 시작 (손 목표=${handTarget}%, 팔꿈치 목표=${elbowTarget}%, 자동 세팅)`);
+  showToast(`▶ ${def.label} 실행 (자동으로 세기를 찾는 중)`, "ok");
 
-  const rampState = { ch1Target, ch2Target, ch1RampMs, ch2RampMs, startedAt: performance.now() };
-  sequentialRampTick(rampState); // 즉시 한 번 전송
-  actionModeInterval = setInterval(() => sequentialRampTick(rampState), 400);
+  const state = { handTarget, elbowTarget };
+  spoonLiftTick(state); // 즉시 한 번 전송
+  actionModeInterval = setInterval(() => spoonLiftTick(state), 400);
 }
 
-function sequentialRampTick(rampState) {
-  if (safetyTripped) {
-    stopActionMode("안전 정지 상태");
-    return;
-  }
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
-    stopActionMode("시리얼 연결 끊김");
-    return;
-  }
+function spoonLiftTick(state) {
+  if (safetyTripped) { stopActionMode("안전 정지 상태"); return; }
+  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) { stopActionMode("시리얼 연결 끊김"); return; }
   const allowed = liveOutputAllowedByConfig();
-  if (!allowed.ok) {
-    stopActionMode(allowed.reason);
-    return;
-  }
-  if (continuousStimExceeded()) {
-    stopActionMode("최대 연속 자극 시간을 초과했습니다");
-    return;
-  }
-  if (totalTimeExceeded()) {
-    stopActionMode("전체 실험 제한시간을 초과했습니다");
-    return;
-  }
+  if (!allowed.ok) { stopActionMode(allowed.reason); return; }
+  if (continuousStimExceeded()) { stopActionMode("최대 연속 자극 시간을 초과했습니다"); return; }
+  if (totalTimeExceeded()) { stopActionMode("전체 실험 제한시간을 초과했습니다"); return; }
 
-  const { ch1Target, ch2Target, ch1RampMs, ch2RampMs } = rampState;
-  const elapsed = performance.now() - rampState.startedAt;
-  let ch1, ch2, phaseLabel;
-  if (elapsed < ch1RampMs) {
-    // 1단계: 채널1만 0 -> 목표로 서서히
-    ch1 = ch1Target * (elapsed / ch1RampMs);
-    ch2 = 0;
-    phaseLabel = `채널1 올리는 중 (${Math.round(ch1)}/${ch1Target})`;
-  } else if (elapsed < ch1RampMs + ch2RampMs) {
-    // 2단계: 채널1은 목표 유지, 채널2가 0 -> 목표로 서서히
-    ch1 = ch1Target;
-    ch2 = ch2Target * ((elapsed - ch1RampMs) / ch2RampMs);
-    phaseLabel = `채널1 유지(${ch1Target}) + 채널2 올리는 중 (${Math.round(ch2)}/${ch2Target})`;
+  const now = performance.now();
+  const handAverage = computeAverage(latestPercent.actual);
+
+  if (handLostSustained || armLostSustained) {
+    actionHandCtrl.state = "WAITING_FOR_HAND";
+    actionElbowCtrl.state = "WAITING_FOR_HAND";
   } else {
-    // 3단계: 둘 다 목표 유지, 정지 누를 때까지 계속
-    ch1 = ch1Target;
-    ch2 = ch2Target;
-    phaseLabel = `채널1(${ch1Target}) + 채널2(${ch2Target}) 유지 중 -- 정지 버튼을 누르기 전까지 계속`;
+    stepFlexOnlyAxis(actionHandCtrl, state.handTarget, handAverage, now);
+    stepFlexOnlyAxis(actionElbowCtrl, state.elbowTarget, armLatestPercent.actual, now);
   }
 
-  actionModeStatusText.textContent = `${ACTION_MODE_DEFS[runningActionKey].label}: ${phaseLabel}`;
-  driveActionChannels(ch1, ch2).catch((err) => logControl("행동 보조 모드 전송 오류: " + err.message));
-  if (ch1 > 0 || ch2 > 0) notifyStimStarted();
+  spoonLiftHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
+  spoonLiftElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
+  actionModeStatusText.textContent =
+    `수저 들기 보조: 손 ${Math.round(handAverage ?? 0)}%/${state.handTarget}% · 팔꿈치 ${Math.round(armLatestPercent.actual ?? 0)}%/${state.elbowTarget}%`;
+
+  driveArmHardwareIfNeeded(actionHandCtrl.intensity, actionElbowCtrl.intensity)
+    .catch((err) => logControl("행동 보조 모드 전송 오류: " + err.message));
+  if (actionHandCtrl.intensity > 0 || actionElbowCtrl.intensity > 0) notifyStimStarted();
   else notifyStimStopped();
 }
 
-// 이두운동 전용 -- 채널1은 한 번(2초)만 올라가서 전체 반복 내내 목표값을 그대로
-// 유지하고, 채널2가 "올라감(3초) → 유지(1초) → 내려감 → 짧은 휴식"을 입력한
-// 반복 횟수만큼 되풀이한다. 내려가는 시간(BICEP_CH2_DOWN_MS)과 반복 사이 휴식
-// (BICEP_REST_BETWEEN_REPS_MS)은 요청에 명시되지 않아서, 올라가는 시간과
-// 대칭(3초)/짧은 값(0.5초)으로 우선 정했다 -- 필요하면 바꿀 수 있다.
-const BICEP_CH1_RAMP_MS = 2000;
-const BICEP_CH2_UP_MS = 3000;
-const BICEP_CH2_HOLD_MS = 1000;
-const BICEP_CH2_DOWN_MS = 3000;
-const BICEP_REST_BETWEEN_REPS_MS = 500;
+// ============================================================================
+// 💪 이두운동 -- 손 목표로 쥔 채 유지하고, 팔꿈치가 "굽힘 목표 ↔ 이완 목표"를
+// 반복 횟수만큼 오간다. 예전엔 각 단계 시간을 고정값(3초/1초 등)으로 정해뒀는데,
+// 이제 그 "몇 초 걸리는지"를 사람마다 다르게 자동으로 맞추는 게 이 폐루프의
+// 핵심이라 고정 시간표 자체가 없다 -- 카메라가 실제로 그 %에 도달(LOCKED)하면
+// 바로 다음 단계로 넘어간다. 굽힘 유지 시간(BICEP_CURL_HOLD_MS)만 고정값으로
+// 남겨뒀다 (예전 BICEP_CH2_HOLD_MS와 같은 개념 -- "도달 후 잠깐 버티기").
+// ============================================================================
+const BICEP_CURL_HOLD_MS = 1000;
 
-async function startBicepRoutine() {
+async function startBicepClosedLoop() {
   const key = "bicep";
   const def = ACTION_MODE_DEFS[key];
 
@@ -2495,204 +2474,98 @@ async function startBicepRoutine() {
     return;
   }
 
-  const allowed = liveOutputAllowedByConfig();
-  if (!allowed.ok) {
-    showToast(`⚠ ${allowed.reason}`, "warn", 4000);
-    return;
-  }
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
-    showToast("⚠ Arduino가 연결되어 있지 않습니다", "warn");
-    return;
-  }
+  showToast("🎬 이두운동 준비 중...", "ok", 2000);
+  if (!(await ensureActionModeReady())) return;
 
-  const ch1Target = Math.max(0, Math.min(100, Number(def.ch1Input.value) || 0));
-  const ch2Target = Math.max(0, Math.min(100, Number(def.ch2Input.value) || 0));
-  if (ch1Target === 0 && ch2Target === 0) {
-    showToast("⚠ 채널1/채널2 전류를 0보다 크게 입력하세요", "warn");
-    return;
-  }
+  const handTarget = Math.max(0, Math.min(100, Number(bicepHandTargetInput.value) || 0));
+  const elbowCurlTarget = Math.max(0, Math.min(100, Number(bicepElbowCurlTargetInput.value) || 0));
+  const elbowReleaseTarget = Math.max(0, Math.min(100, Number(bicepElbowReleaseTargetInput.value) || 0));
   const reps = Math.max(1, Math.min(100, Number(bicepRepsInput.value) || 1));
 
-  const oneRepMs = BICEP_CH2_UP_MS + BICEP_CH2_HOLD_MS + BICEP_CH2_DOWN_MS + BICEP_REST_BETWEEN_REPS_MS;
-  const totalS = (BICEP_CH1_RAMP_MS + reps * oneRepMs) / 1000;
-  if (config.safety.maxContinuousStimSeconds < totalS) {
-    showToast(
-      `⚠ 연속 자극 시간 제한이 ${config.safety.maxContinuousStimSeconds}초라 전체 세트(약 ${Math.ceil(totalS)}초) 도중 자동 정지될 수 있어요 -- ③ 카드에서 늘려주세요`,
-      "warn",
-      5000
-    );
-  }
-
+  resetActionAxisCtrls();
   runningActionKey = key;
   def.btn.textContent = "■ 이두운동 정지";
   def.btn.classList.add("running");
-  logControl(`🎬 행동 보조 모드: 이두운동 시작 (채널1=${ch1Target}, 채널2=${ch2Target}, ${reps}회 반복)`);
-  showToast(`▶ 이두운동 실행 (${reps}회 반복)`, "ok");
+  logControl(
+    `🎬 행동 보조 모드: 이두운동 시작 (손=${handTarget}%, 팔꿈치 굽힘=${elbowCurlTarget}%/이완=${elbowReleaseTarget}%, ${reps}회 반복, 자동 세팅)`
+  );
+  showToast(`▶ 이두운동 실행 (${reps}회 반복, 자동으로 세기를 찾는 중)`, "ok");
 
   const state = {
-    ch1Target,
-    ch2Target,
-    reps,
+    handTarget, elbowCurlTarget, elbowReleaseTarget, reps,
     repIndex: 0,
-    phase: "ch1Ramp", // ch1Ramp -> ch2Up -> ch2Hold -> ch2Down -> rest -> (ch2Up ...반복) -> 완료
-    phaseStartedAt: performance.now()
+    phase: "grip", // grip -> curl -> hold -> release -> (curl... 반복) -> 완료
+    holdStartedAt: null
   };
-  bicepRoutineTick(state); // 즉시 한 번 전송
-  actionModeInterval = setInterval(() => bicepRoutineTick(state), 400);
+  bicepClosedLoopTick(state); // 즉시 한 번 전송
+  actionModeInterval = setInterval(() => bicepClosedLoopTick(state), 400);
 }
 
-function bicepRoutineTick(state) {
-  if (safetyTripped) {
-    stopActionMode("안전 정지 상태");
-    return;
-  }
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
-    stopActionMode("시리얼 연결 끊김");
-    return;
-  }
+function bicepClosedLoopTick(state) {
+  if (safetyTripped) { stopActionMode("안전 정지 상태"); return; }
+  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) { stopActionMode("시리얼 연결 끊김"); return; }
   const allowed = liveOutputAllowedByConfig();
-  if (!allowed.ok) {
-    stopActionMode(allowed.reason);
-    return;
-  }
-  if (continuousStimExceeded()) {
-    stopActionMode("최대 연속 자극 시간을 초과했습니다");
-    return;
-  }
-  if (totalTimeExceeded()) {
-    stopActionMode("전체 실험 제한시간을 초과했습니다");
-    return;
-  }
+  if (!allowed.ok) { stopActionMode(allowed.reason); return; }
+  if (continuousStimExceeded()) { stopActionMode("최대 연속 자극 시간을 초과했습니다"); return; }
+  if (totalTimeExceeded()) { stopActionMode("전체 실험 제한시간을 초과했습니다"); return; }
 
   const now = performance.now();
-  const elapsed = now - state.phaseStartedAt;
-  let ch1 = state.ch1Target; // ch1Ramp 단계 이후엔 항상 목표값 그대로 유지
-  let ch2 = 0;
-  let phaseLabel = "";
+  const handAverage = computeAverage(latestPercent.actual);
 
-  if (state.phase === "ch1Ramp") {
-    ch1 = state.ch1Target * Math.min(1, elapsed / BICEP_CH1_RAMP_MS);
-    phaseLabel = `채널1 올리는 중 (${Math.round(ch1)}/${state.ch1Target})`;
-    if (elapsed >= BICEP_CH1_RAMP_MS) {
-      state.phase = "ch2Up";
-      state.phaseStartedAt = now;
+  if (handLostSustained || armLostSustained) {
+    actionHandCtrl.state = "WAITING_FOR_HAND";
+    actionElbowCtrl.state = "WAITING_FOR_HAND";
+    actionModeStatusText.textContent = "이두운동: 손/팔 인식 대기 중";
+    bicepHandStateText.textContent = STATE_LABELS.WAITING_FOR_HAND;
+    bicepElbowStateText.textContent = STATE_LABELS.WAITING_FOR_HAND;
+    driveArmHardwareIfNeeded(actionHandCtrl.intensity, actionElbowCtrl.intensity).catch(() => {});
+    return;
+  }
+
+  // 손은 처음부터 끝까지 계속 목표를 유지하도록 매 tick 그대로 재적용한다
+  // (쥔 손이 느슨해지면 폐루프가 알아서 다시 조여줌).
+  stepFlexOnlyAxis(actionHandCtrl, state.handTarget, handAverage, now);
+
+  let phaseLabel = "";
+  if (state.phase === "grip") {
+    phaseLabel = `손 쥐는 중 (목표 ${state.handTarget}%)`;
+    if (actionHandCtrl.state === "LOCKED") {
+      state.phase = "curl";
       state.repIndex = 1;
     }
-  } else if (state.phase === "ch2Up") {
-    ch2 = state.ch2Target * Math.min(1, elapsed / BICEP_CH2_UP_MS);
-    phaseLabel = `${state.repIndex}/${state.reps}회차 -- 채널2 올리는 중 (${Math.round(ch2)}/${state.ch2Target}), 채널1 유지(${state.ch1Target})`;
-    if (elapsed >= BICEP_CH2_UP_MS) {
-      state.phase = "ch2Hold";
-      state.phaseStartedAt = now;
+  } else if (state.phase === "curl") {
+    stepFlexOnlyAxis(actionElbowCtrl, state.elbowCurlTarget, armLatestPercent.actual, now);
+    phaseLabel = `${state.repIndex}/${state.reps}회차 -- 팔꿈치 굽히는 중 (목표 ${state.elbowCurlTarget}%)`;
+    if (actionElbowCtrl.state === "LOCKED") {
+      state.phase = "hold";
+      state.holdStartedAt = now;
     }
-  } else if (state.phase === "ch2Hold") {
-    ch2 = state.ch2Target;
-    phaseLabel = `${state.repIndex}/${state.reps}회차 -- 채널2 유지(${state.ch2Target}), 채널1 유지(${state.ch1Target})`;
-    if (elapsed >= BICEP_CH2_HOLD_MS) {
-      state.phase = "ch2Down";
-      state.phaseStartedAt = now;
+  } else if (state.phase === "hold") {
+    stepFlexOnlyAxis(actionElbowCtrl, state.elbowCurlTarget, armLatestPercent.actual, now);
+    phaseLabel = `${state.repIndex}/${state.reps}회차 -- 팔꿈치 유지 중`;
+    if (now - state.holdStartedAt >= BICEP_CURL_HOLD_MS) {
+      state.phase = "release";
     }
-  } else if (state.phase === "ch2Down") {
-    ch2 = state.ch2Target * (1 - Math.min(1, elapsed / BICEP_CH2_DOWN_MS));
-    phaseLabel = `${state.repIndex}/${state.reps}회차 -- 채널2 내리는 중 (${Math.round(ch2)}/${state.ch2Target}), 채널1 유지(${state.ch1Target})`;
-    if (elapsed >= BICEP_CH2_DOWN_MS) {
+  } else if (state.phase === "release") {
+    stepFlexOnlyAxis(actionElbowCtrl, state.elbowReleaseTarget, armLatestPercent.actual, now);
+    phaseLabel = `${state.repIndex}/${state.reps}회차 -- 팔꿈치 이완 중 (목표 ${state.elbowReleaseTarget}%)`;
+    if (actionElbowCtrl.state === "LOCKED") {
       if (state.repIndex >= state.reps) {
         stopActionMode(`이두운동 ${state.reps}회 완료`);
         return;
       }
-      state.phase = "rest";
-      state.phaseStartedAt = now;
-    }
-  } else if (state.phase === "rest") {
-    ch2 = 0;
-    phaseLabel = `${state.repIndex}/${state.reps}회차 완료 -- 다음 반복 준비 중, 채널1 유지(${state.ch1Target})`;
-    if (elapsed >= BICEP_REST_BETWEEN_REPS_MS) {
       state.repIndex += 1;
-      state.phase = "ch2Up";
-      state.phaseStartedAt = now;
+      state.phase = "curl";
     }
   }
 
+  bicepHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
+  bicepElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
   actionModeStatusText.textContent = `이두운동: ${phaseLabel}`;
-  driveActionChannels(ch1, ch2).catch((err) => logControl("이두운동 전송 오류: " + err.message));
-  if (ch1 > 0 || ch2 > 0) notifyStimStarted();
-  else notifyStimStopped();
-}
 
-async function startAction(key) {
-  const def = ACTION_MODE_DEFS[key];
-  if (!def) return;
-
-  if (runningActionKey && runningActionKey !== key) {
-    stopActionMode(`"${ACTION_MODE_DEFS[runningActionKey].label}"에서 "${def.label}"로 전환`);
-  } else if (runningActionKey === key) {
-    stopActionMode("사용자가 다시 눌러 정지");
-    return;
-  }
-
-  const allowed = liveOutputAllowedByConfig();
-  if (!allowed.ok) {
-    showToast(`⚠ ${allowed.reason}`, "warn", 4000);
-    return;
-  }
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
-    showToast("⚠ Arduino가 연결되어 있지 않습니다", "warn");
-    return;
-  }
-
-  const ch1Val = Math.max(0, Math.min(100, Number(def.ch1Input.value) || 0));
-  const ch2Val = Math.max(0, Math.min(100, Number(def.ch2Input.value) || 0));
-  if (ch1Val === 0 && ch2Val === 0) {
-    showToast("⚠ 채널1/채널2 전류를 0보다 크게 입력하세요", "warn");
-    return;
-  }
-
-  // 행동 보조 모드도 도중에 한 번도 0으로 안 끊기고 계속 흐르는 방식이라, 연속
-  // 자극 시간 제한(기본 10초)에 걸려 짧게짧게 계속 자동 정지될 수 있다. 실행
-  // 버튼을 누를 때마다 미리 알려준다 (막지는 않음).
-  if (config.safety.maxContinuousStimSeconds < 30) {
-    showToast(
-      `⚠ 연속 자극 시간 제한이 ${config.safety.maxContinuousStimSeconds}초라 곧 자동 정지될 수 있어요 -- 계속 유지하려면 ③ 카드에서 늘려주세요`,
-      "warn",
-      5000
-    );
-  }
-
-  runningActionKey = key;
-  def.btn.textContent = `■ ${def.label} 정지`;
-  def.btn.classList.add("running");
-  actionModeStatusText.textContent = `${def.label} 실행 중 (채널1: ${ch1Val}, 채널2: ${ch2Val})`;
-  logControl(`🎬 행동 보조 모드: ${def.label} 시작 (채널1=${ch1Val}, 채널2=${ch2Val})`);
-  showToast(`▶ ${def.label} 실행`, "ok");
-
-  actionModeTick(ch1Val, ch2Val); // 즉시 한 번 전송
-  actionModeInterval = setInterval(() => actionModeTick(ch1Val, ch2Val), 400);
-}
-
-function actionModeTick(ch1Val, ch2Val) {
-  if (safetyTripped) {
-    stopActionMode("안전 정지 상태");
-    return;
-  }
-  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
-    stopActionMode("시리얼 연결 끊김");
-    return;
-  }
-  const allowed = liveOutputAllowedByConfig();
-  if (!allowed.ok) {
-    stopActionMode(allowed.reason);
-    return;
-  }
-  if (continuousStimExceeded()) {
-    stopActionMode("최대 연속 자극 시간을 초과했습니다");
-    return;
-  }
-  if (totalTimeExceeded()) {
-    stopActionMode("전체 실험 제한시간을 초과했습니다");
-    return;
-  }
-  driveActionChannels(ch1Val, ch2Val).catch((err) => logControl("행동 보조 모드 전송 오류: " + err.message));
-  if (ch1Val > 0 || ch2Val > 0) notifyStimStarted();
+  driveArmHardwareIfNeeded(actionHandCtrl.intensity, actionElbowCtrl.intensity)
+    .catch((err) => logControl("이두운동 전송 오류: " + err.message));
+  if (actionHandCtrl.intensity > 0 || actionElbowCtrl.intensity > 0) notifyStimStarted();
   else notifyStimStopped();
 }
 
@@ -2709,6 +2582,7 @@ function stopActionMode(reason) {
   }
   runningActionKey = null;
   actionModeStatusText.textContent = "대기 중";
+  resetActionAxisCtrls();
   notifyStimStopped();
   if (serialLink) {
     serialLink.setIntensity(1, 0, 500).catch(() => {});
@@ -2793,7 +2667,7 @@ function personalizationRampTick(step) {
   personalizationRampValue.textContent = Math.round(personalizationRampIntensity);
   const ch1 = personalizationRampChannel === 1 ? personalizationRampIntensity : 0;
   const ch2 = personalizationRampChannel === 2 ? personalizationRampIntensity : 0;
-  driveActionChannels(ch1, ch2).catch((err) => logControl("개인화 모드 전송 오류: " + err.message));
+  driveArmHardwareIfNeeded(ch1, ch2).catch((err) => logControl("개인화 모드 전송 오류: " + err.message));
   notifyStimStarted();
 
   if (personalizationRampIntensity >= 100) {
@@ -2823,28 +2697,10 @@ function stopPersonalizationRamp(reason) {
   }
 }
 
-// 개인화 모드에서 방금 잰 세기(personalizationRampIntensity)를, 위에서 고른
-// 채널(personalizationRampChannel)에 맞춰 선택한 행동의 채널 입력칸에 채워넣는다.
-// 여기서 끝나는 게 아니라, 그 뒤 "회원 등록"을 눌러야 실제로 그 사람 값으로
-// 저장된다 (이 버튼은 입력칸까지만 채워줌).
-function savePersonalizationValue() {
-  if (personalizationRampIntensity <= 0) {
-    showToast("⚠ 아직 측정된 세기가 없습니다 -- 개인화 모드를 먼저 실행하세요", "warn");
-    return;
-  }
-  const targetAction = personalizationTargetBicep.checked ? "bicep" : "spoonLift";
-  const value = Math.round(personalizationRampIntensity);
-  const input =
-    targetAction === "spoonLift"
-      ? (personalizationRampChannel === 1 ? spoonLiftCh1Input : spoonLiftCh2Input)
-      : (personalizationRampChannel === 1 ? bicepCh1Input : bicepCh2Input);
-
-  input.value = value;
-  const actionLabel = targetAction === "spoonLift" ? "수저 들기 보조" : "이두운동";
-  logControl(`💾 개인화 값 저장: ${actionLabel} 채널${personalizationRampChannel} = ${value} (입력칸에 채움)`);
-  showToast(`✅ ${actionLabel} 채널${personalizationRampChannel}에 ${value} 채워짐 -- 회원 등록으로 마저 저장하세요`, "ok");
-  flashButtonPress(personalizationSaveBtn, "✅ 저장됨!");
-}
+// (예전엔 여기 savePersonalizationValue()가 있었다 -- 개인화 모드에서 잰 세기를
+// 수저/이두 채널 입력칸에 채워주는 기능. 그 입력칸들이 이제 "채널 전류"가 아니라
+// "목표 %"로 바뀌면서(폐루프가 알아서 세기를 찾음) 이 기능 자체가 의미가 없어져
+// 제거했다. "이 값을 저장할 곳" UI 카드도 같은 이유로 index.html에서 제거됨.)
 
 // ============================================================================
 // 폐루프 제어기 (controller.py 를 JS로 포팅)
@@ -3073,8 +2929,8 @@ function resetAfterTrip() {
 }
 
 // safetyTripped는 한 번 true가 되면 이걸 풀기 전까지 모든 모드가 첫 틱에서
-// 바로 다시 꺼진다 (actionModeTick/personalizationRampTick의 safetyTripped
-// 체크 참고). 예전엔 이 상태가 화면 어디에도 안 보여서 "왜 자꾸 꺼지지?"의
+// 바로 다시 꺼진다 (spoonLiftTick/bicepClosedLoopTick/personalizationRampTick의
+// safetyTripped 체크 참고). 예전엔 이 상태가 화면 어디에도 안 보여서 "왜 자꾸 꺼지지?"의
 // 원인을 알 방법이 없었다 -- 지금은 ③ 카드 맨 위에 이유와 해제 버튼을 보여준다.
 function updateSafetyTripUi() {
   if (safetyTripped) {
