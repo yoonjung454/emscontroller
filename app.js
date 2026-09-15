@@ -2456,7 +2456,7 @@ async function startSpoonLiftClosedLoop() {
   logControl(`🎬 행동 보조 모드: ${def.label} 시작 (손 목표=${handTarget}%, 팔꿈치 목표=${elbowTarget}%, 자동 세팅)`);
   showToast(`▶ ${def.label} 실행 (자동으로 세기를 찾는 중)`, "ok");
 
-  const state = { handTarget, elbowTarget, phase: "hand" }; // hand -> elbow -> done (순차 진행)
+  const state = { handTarget, elbowTarget, phase: "hand" }; // hand -> elbow -> (팔꿈치 LOCKED되면 완료 처리 후 정지)
   spoonLiftTick(state); // 즉시 한 번 전송
   actionModeInterval = setInterval(() => spoonLiftTick(state), 400);
 }
@@ -2494,16 +2494,20 @@ function spoonLiftTick(state) {
     actionHandCtrl.intensity = 0;
     actionHandCtrl.state = "STANDBY";
     stepFlexOnlyAxis(actionElbowCtrl, state.elbowTarget, armLatestPercent.actual, now);
-    if (actionElbowCtrl.state === "LOCKED" && state.phase !== "done") {
-      state.phase = "done";
-      logControl("✅ 팔꿈치(채널2) 목표 도달 -- 자세를 유지합니다");
-      showToast("✅ 수저 들기 보조 완료 -- 자세 유지 중", "ok", 4000);
+    if (actionElbowCtrl.state === "LOCKED") {
+      // ⚠ 버그 수정: 여기서 phase만 "done"으로 바꾸고 손/팔꿈치 세기 계산을
+      // 멈추면, stepFlexOnlyAxis를 더 이상 안 불러서 마지막 intensity 값이
+      // "그대로 얼어붙은 채" 계속 하드웨어로 재전송됐다 -- 목표에 도달해도
+      // 전류가 안 멈추고 계속 나가던 원인. 목표(구부림)에 도달하면 실제로
+      // 전류를 멈춰야 한다는 요청대로, 여기서 행동 자체를 완료 처리하고 정지한다.
+      stopActionMode("✅ 목표 도달 -- 수저 들기 보조 완료");
+      return;
     }
   }
 
-  const phaseLabel = state.phase === "hand" ? "① 손 그립 중"
-    : state.phase === "elbow" ? "② 팔꿈치 들어올리는 중"
-    : "완료 -- 자세 유지 중";
+  // phase는 "hand" -> "elbow"만 거친다 -- 팔꿈치까지 LOCKED되면 위에서 바로
+  // stopActionMode()로 완료 처리하고 return하므로 "done" 단계는 따로 없다.
+  const phaseLabel = state.phase === "hand" ? "① 손 그립 중" : "② 팔꿈치 들어올리는 중";
   spoonLiftHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
   spoonLiftElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
   actionModeStatusText.textContent =
