@@ -178,6 +178,7 @@ let appMode = "mirror";
 // 캘리브레이션·목표비교 없이 순수하게 "이 채널에 지금 전기가 나가는지"만
 // 빠르게 확인하는 용도 (channel_alternate_test.ino와 같은 목적을 웹 UI에서).
 let testKeyChannel = null;
+let testLastSendTime = 0; // 마지막으로 실제 SET을 보낸 시각 -- 아래 testModeKeyDown 참고
 
 // 행동 보조 모드 상태 -- "물따르기"/"이두운동" 중 하나만 동시에 실행 가능.
 // 거울 모드의 activeChannel/controllerIntensity(채널 1개만 표현 가능한 구조)와
@@ -3068,7 +3069,22 @@ async function testModeKeyDown(channel) {
     return;
   }
 
+  // 브라우저는 키를 누르고 있으면 keydown을 아주 빠르게(수십ms 간격) 반복
+  // 발생시킨다. 예전엔 그때마다 매번 SET을 새로 보냈는데, 시리얼 명령이
+  // 순서대로 처리되는 큐(WebSerialLink._chain)에 계속 쌓여서, 키를 뗀 순간
+  // 보내는 "정지(0)" 명령이 그 밀린 큐 뒤에 서서 한참 늦게 처리되는 문제가
+  // 있었다 (카메라 프레임마다 보내던 예전 버그와 같은 종류). 그래서 실제
+  // 전송은 testLastSendTime 기준으로 최소 간격을 두고, 그 사이의 반복
+  // keydown은 새로 보내지 않고 건너뛴다 -- TTL(600ms)보다 훨씬 짧은 간격으로만
+  // 새로고침하면 충분하고, 그래야 keyup이 큐 맨 앞에 가깝게 도착해서 즉시 먹힌다.
+  const now = performance.now();
+  const alreadyActiveSameChannel = testKeyChannel === channel;
   testKeyChannel = channel;
+
+  if (alreadyActiveSameChannel && now - testLastSendTime < 150) {
+    return; // 최근에 이미 보냈음 -- 이번 반복 입력은 건너뜀
+  }
+  testLastSendTime = now;
 
   // 다른 채널이 눌려있던 상태였다면 먼저 확실히 끔 (두 채널 동시 자극 방지 --
   // driveHardwareIfNeeded와 같은 이유).
@@ -3091,9 +3107,8 @@ async function testModeKeyDown(channel) {
   // 범위만 맞춰서 그대로 내보낸다 (테스트 모드는 전기 주기 + 세기 설정, 그
   // 두 가지만 하도록 요청받아 나머지 안전 게이트는 여기서는 뺐다).
   const intensity = Math.round(Math.min(100, Math.max(0, Number(testIntensityInput.value) || 0)));
-  // TTL을 짧게 잡아서(600ms), 키를 계속 누르고 있으면 브라우저 키 반복 입력이
-  // 이 함수를 계속 다시 불러 SET을 반복 전송하며 TTL을 계속 갱신한다. 혹시
-  // 반복 입력이 하필 늦게 와도 600ms 안에는 자동으로 꺼지니, keyup을 못 받는
+  // TTL을 짧게 잡아서(600ms), 위 150ms 간격으로 재전송하며 TTL을 계속 갱신한다.
+  // 혹시 재전송이 하필 늦어도 600ms 안에는 자동으로 꺼지니, keyup을 못 받는
   // 상황(창 포커스 이탈 등)에서도 오래 켜진 채로 남지 않는다.
   await serialLink.setIntensity(channel, intensity, 600);
   lastDrivenChannel = channel;
