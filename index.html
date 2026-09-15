@@ -629,8 +629,12 @@
         화면에 참고용으로 같이 그려질 뿐, 이 모드의 전류 출력에는 전혀 관여하지 않습니다.)
       </p>
       <div class="safety-row">
-        <label for="testIntensityInput">테스트 세기 (0~100)</label>
-        <input type="number" id="testIntensityInput" min="0" max="100" value="20" />
+        <label for="testIntensityCh1Input">← 채널1 세기 (0~100)</label>
+        <input type="number" id="testIntensityCh1Input" min="0" max="100" value="20" />
+      </div>
+      <div class="safety-row">
+        <label for="testIntensityCh2Input">→ 채널2 세기 (0~100)</label>
+        <input type="number" id="testIntensityCh2Input" min="0" max="100" value="20" />
       </div>
       <p class="hint" style="margin-top:4px;">
         ⚠️ 이 모드는 ③ 카드의 안전 최대 제어값과 무관하게, 위에 입력한 세기가 <b>그대로</b>

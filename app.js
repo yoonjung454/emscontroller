@@ -501,7 +501,8 @@ const armHandStateText = document.getElementById("armHandStateText");
 const invertArmSidesCheckbox = document.getElementById("invertArmSidesCheckbox");
 
 // 테스트 모드
-const testIntensityInput = document.getElementById("testIntensityInput");
+const testIntensityCh1Input = document.getElementById("testIntensityCh1Input");
+const testIntensityCh2Input = document.getElementById("testIntensityCh2Input");
 const testModeStatusText = document.getElementById("testModeStatusText");
 
 // 행동 보조 모드 (오픈루프 고정 전류)
@@ -3205,8 +3206,10 @@ async function testModeKeyDown(channel) {
 
   // ③ 카드의 안전 최대값(clampHardware)을 거치지 않고, 입력한 세기를 0~100
   // 범위만 맞춰서 그대로 내보낸다 (테스트 모드는 전기 주기 + 세기 설정, 그
-  // 두 가지만 하도록 요청받아 나머지 안전 게이트는 여기서는 뺐다).
-  const intensity = Math.round(Math.min(100, Math.max(0, Number(testIntensityInput.value) || 0)));
+  // 두 가지만 하도록 요청받아 나머지 안전 게이트는 여기서는 뺐다). 채널1/채널2
+  // 세기를 따로 입력받아 각자 다른 값으로 테스트할 수 있게 한다.
+  const intensityInput = channel === 1 ? testIntensityCh1Input : testIntensityCh2Input;
+  const intensity = Math.round(Math.min(100, Math.max(0, Number(intensityInput.value) || 0)));
   // TTL을 짧게 잡아서(600ms), 위 150ms 간격으로 재전송하며 TTL을 계속 갱신한다.
   // 혹시 재전송이 하필 늦어도 600ms 안에는 자동으로 꺼지니, keyup을 못 받는
   // 상황(창 포커스 이탈 등)에서도 오래 켜진 채로 남지 않는다.
