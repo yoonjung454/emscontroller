@@ -87,6 +87,7 @@ const STATE_LABELS = {
   WAITING_FOR_HAND: "오른손 인식 안됨 (대기 중)",
   INCREASING: "구부리는 중 (채널1)",
   DECREASING: "펴는 중 (채널2)",
+  REDUCING: "세기를 낮추는 중 (목표보다 더 구부러짐)",
   HOLDING: "목표 유지 중",
   SUCCESS: "성공",
   LOCKED: "✅ 도달 완료 (자세 유지 중 -- 해제 버튼으로 종료)",
@@ -1328,7 +1329,13 @@ function processResult(result, poseResult) {
       if (!runtime.ok && !safetyTripped) {
         triggerEmergencyStop(runtime.reason);
       }
-      if (armLostSustained) {
+      // ⚠ safetyTripped는 트립되는 순간 말고 매 tick 계속 확인해야 한다 (위
+      // updateController()에 남긴 것과 같은 버그 -- 여기 없으면 트립된 다음에도
+      // 이 블록이 계속 stepFlexOnlyAxis를 불러 세기를 올리고 하드웨어로 내보낸다).
+      if (safetyTripped) {
+        armHandCtrl.intensity = 0; armHandCtrl.state = "SAFETY_STOP"; armHandCtrl.successSince = null;
+        armElbowCtrl.intensity = 0; armElbowCtrl.state = "SAFETY_STOP"; armElbowCtrl.successSince = null;
+      } else if (armLostSustained) {
         armHandCtrl.state = "WAITING_FOR_HAND";
         armElbowCtrl.state = "WAITING_FOR_HAND";
       } else {
@@ -1359,12 +1366,20 @@ function processResult(result, poseResult) {
     // 별개의 열린 루프라, 이 tick 동안은 그 로직을 건너뛰고 스윕만 진행한다.
     // (스윕을 시작할 때 controlEnabled를 이미 강제로 꺼뒀으므로 아래 하드웨어
     // 전송 스로틀 블록과 충돌하지 않는다.)
-    const runtime = runtimeCheck(handLostSustained);
-    if (!runtime.ok && !safetyTripped) {
-      triggerEmergencyStop(runtime.reason);
-      abortSweep(runtime.reason);
+    // ⚠ 버그 수정: 예전엔 "!runtime.ok && !safetyTripped"만 봐서, 이미 트립된
+    // 상태인데 그 순간의 runtimeCheck 자체는 통과하면(예: 손이 다시 잡히거나
+    // 시간 제한을 아직 안 넘겼으면) else로 빠져서 tickSweep()이 계속 실제
+    // 자극(serialLink.setIntensity)을 내보냈다. safetyTripped를 별도로 먼저 확인.
+    if (safetyTripped) {
+      abortSweep("안전 정지 상태");
     } else {
-      tickSweep(now);
+      const runtime = runtimeCheck(handLostSustained);
+      if (!runtime.ok) {
+        triggerEmergencyStop(runtime.reason);
+        abortSweep(runtime.reason);
+      } else {
+        tickSweep(now);
+      }
     }
   } else if (!controlEnabled) {
     controlState = "STANDBY";
@@ -2850,6 +2865,21 @@ function forceZeroController(reason) {
 }
 
 function updateController(currentPercent, now) {
+  // ⚠ 버그 수정: safetyTripped는 그동안 "트립되는 그 순간" forceZeroController()로
+  // 한 번 0으로 만드는 것 말고는, 그 뒤로 매 tick 계속 확인하는 코드가 없었다.
+  // 그래서 실시간 왼손 연동(liveMirrorActive)이나 팔 인식 모드처럼 매 프레임
+  // targetPercent를 다시 채워주는 기능이 켜져 있으면, 트립된 다음에도 바로
+  // 다음 tick에 목표가 다시 채워지면서 제어가 조용히 재개돼버렸다 (행동 보조/
+  // 개인화 모드는 각자의 tick 함수에 safetyTripped 체크가 있어서 이 문제가
+  // 없었는데, 거울모드/팔인식모드가 쓰는 여기(updateController)엔 빠져있었음).
+  if (safetyTripped) {
+    controllerIntensity = 0;
+    successSince = null;
+    holdLocked = false;
+    controlState = "SAFETY_STOP";
+    lastError = null;
+    return;
+  }
   if (targetPercent === null) {
     controlState = "IDLE";
     lastError = null;
@@ -3118,17 +3148,28 @@ function stepFlexOnlyAxis(ctrl, targetPercent, currentPercent, now) {
     return; // intensity는 건드리지 않음 -- 마지막 값 유지 (잠깐 놓친 것일 수 있어서)
   }
   const error = targetPercent - currentPercent;
-  if (error <= config.control.tolerancePercent) {
-    // 목표 도달(또는 이미 초과) -- 낮출 채널이 없으니 지금 세기를 그대로 유지.
+  if (Math.abs(error) <= config.control.tolerancePercent) {
+    // 허용 오차 범위 안 -- 지금 세기 그대로 유지.
     if (ctrl.successSince === null) ctrl.successSince = now;
     const heldForS = (now - ctrl.successSince) / 1000;
     ctrl.state = heldForS >= config.control.successHoldSeconds ? "LOCKED" : "HOLDING";
     return;
   }
   ctrl.successSince = null;
-  const step = Math.min(config.control.maxStepUp, config.control.kpUp * error);
-  ctrl.intensity = clampWorkingFloat(ctrl.intensity + step);
-  ctrl.state = "INCREASING";
+  if (error > 0) {
+    // 목표보다 덜 구부러짐 -- 조심스럽게 증가 (kpUp/maxStepUp, 기존 게인 재사용)
+    const step = Math.min(config.control.maxStepUp, config.control.kpUp * error);
+    ctrl.intensity = clampWorkingFloat(ctrl.intensity + step);
+    ctrl.state = "INCREASING";
+  } else {
+    // 목표보다 더 구부러짐 -- 펴는 채널은 없지만, 같은 채널의 세기 자체를
+    // 낮추면 근육 수축이 약해져서 자연히 풀리는 데 도움이 된다 (kpDown/
+    // maxStepDown, 기존 채널2 게인을 재사용 -- "빠르게 회수"하려던 원래
+    // 의도와 같은 값이라 여기서도 그대로 맞는다).
+    const step = Math.min(config.control.maxStepDown, config.control.kpDown * Math.abs(error));
+    ctrl.intensity = clampWorkingFloat(ctrl.intensity - step);
+    ctrl.state = "REDUCING";
+  }
 }
 
 // 손(채널1)·팔꿈치(채널2)를 매번 같이 보낸다 -- 거울모드의 driveHardwareIfNeeded와
