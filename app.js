@@ -198,16 +198,15 @@ const PERSONALIZATION_RAMP_TICK_MS = 500; // 이 주기마다 세기를 올리�
 const DEFAULT_CONFIG = {
   presets: { light: 30, half: 60, strong: 90 },
   control: {
-    // 오르는 속도(kpUp/maxStepUp)와 내리는 속도(kpDown/maxStepDown)가 원래는
-    // 크게 달랐다(내리는 쪽이 훨씬 빠름). "둘 다 속도를 같게 하고 30% 더
-    // 느리게 해달라"는 요청으로, 더 조심스러운 쪽(원래 kpUp/maxStepUp)을
-    // 기준으로 맞추고 거기서 30% 더 낮췄다 (0.02*0.7=0.014, 1*0.7=0.7).
-    kpUp: 0.014,
-    kpDown: 0.014,
+    // 오르는 속도(kpUp/maxStepUp)와 내리는 속도(kpDown/maxStepDown)를 동일하게
+    // 맞췄다 (원래 kpUp/maxStepUp 기준). 30% 감속(0.014/0.7)이 "너무 느리다"고
+    // 해서, 원래값(0.02/1)과 30%감속값의 중간으로 다시 올렸다.
+    kpUp: 0.017,
+    kpDown: 0.017,
     tolerancePercent: 5,
     successHoldSeconds: 1.5,
-    maxStepUp: 0.7,
-    maxStepDown: 0.7,
+    maxStepUp: 0.85,
+    maxStepDown: 0.85,
     controlPeriodMs: 6000 // 근육이 반응할 시간을 더 주기 위해 4초 -> 6초
   },
   safety: {
