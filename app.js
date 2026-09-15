@@ -198,12 +198,16 @@ const PERSONALIZATION_RAMP_TICK_MS = 500; // 이 주기마다 세기를 올리�
 const DEFAULT_CONFIG = {
   presets: { light: 30, half: 60, strong: 90 },
   control: {
-    kpUp: 0.02,   // 덜 구부러졌을 때(부족) -- 더 작게: 아주 조심스럽게 증가
-    kpDown: 0.3,  // 더 구부러졌을 때(과함) -- 크게: 신전 기능이 없으니 오차에 비례해 빠르게 회수
+    // 오르는 속도(kpUp/maxStepUp)와 내리는 속도(kpDown/maxStepDown)가 원래는
+    // 크게 달랐다(내리는 쪽이 훨씬 빠름). "둘 다 속도를 같게 하고 30% 더
+    // 느리게 해달라"는 요청으로, 더 조심스러운 쪽(원래 kpUp/maxStepUp)을
+    // 기준으로 맞추고 거기서 30% 더 낮췄다 (0.02*0.7=0.014, 1*0.7=0.7).
+    kpUp: 0.014,
+    kpDown: 0.014,
     tolerancePercent: 5,
     successHoldSeconds: 1.5,
-    maxStepUp: 1,       // 한 번에 최대 +1까지만 (더 낮춤)
-    maxStepDown: 8,
+    maxStepUp: 0.7,
+    maxStepDown: 0.7,
     controlPeriodMs: 6000 // 근육이 반응할 시간을 더 주기 위해 4초 -> 6초
   },
   safety: {
@@ -368,8 +372,8 @@ let invertArmSides = false; // POSE_ARM_A가 반대로(actual로) 인식되면 �
 // 둘 다 "목표만큼 부족하면 조심스럽게 증가, 도달했으면 그 세기로 유지"만
 // 한다 (펴는 건 본인이 힘을 빼거나 중력에 맡김 -- 일부 EMS 보조기기가
 // 실제로 이렇게 그립/보조 전용으로만 동작한다).
-let armHandCtrl = { intensity: 0, state: "STANDBY", successSince: null };
-let armElbowCtrl = { intensity: 0, state: "STANDBY", successSince: null };
+let armHandCtrl = { intensity: 0, state: "STANDBY", successSince: null, lastStepTime: 0 };
+let armElbowCtrl = { intensity: 0, state: "STANDBY", successSince: null, lastStepTime: 0 };
 
 const latestSmoothed = { source: {}, actual: {} }; // role -> finger -> degrees
 const latestPercent = { source: {}, actual: {} }; // role -> finger -> 0-100 | null
@@ -851,7 +855,14 @@ function loadConfig() {
       const parsed = JSON.parse(raw);
       return {
         presets: { ...DEFAULT_CONFIG.presets, ...(parsed.presets || {}) },
-        control: { ...DEFAULT_CONFIG.control, ...(parsed.control || {}) },
+        // control(kpUp/kpDown/maxStepUp/maxStepDown/tolerancePercent/...)은
+        // 화면에 이 값을 바꾸는 입력칸이 하나도 없다 -- 전부 코드에서만 정하는
+        // 값이다. 그런데도 예전엔 저장된 localStorage 값을 그대로 덮어써서,
+        // 코드에서 속도(kpUp/kpDown 등) 기본값을 나중에 고쳐도 이미 한 번
+        // saveConfig()가 호출된 브라우저에서는 옛날 값이 계속 남아있는 문제가
+        // 있었다 (실제로 이 문제로 속도 조정이 안 먹혔음). 그래서 control은
+        // 저장된 값을 무시하고 항상 최신 DEFAULT_CONFIG.control을 그대로 쓴다.
+        control: { ...DEFAULT_CONFIG.control },
         safety: { ...DEFAULT_CONFIG.safety, ...(parsed.safety || {}) },
         serial: { ...DEFAULT_CONFIG.serial, ...(parsed.serial || {}) }
       };
@@ -3156,16 +3167,26 @@ function stepFlexOnlyAxis(ctrl, targetPercent, currentPercent, now) {
     return;
   }
   ctrl.successSince = null;
+
+  // ⚠ 버그 수정: 이 함수는 카메라 프레임마다(초당 수십 번) 불렸는데, 거울모드
+  // updateController()는 원래 control_period_ms 주기로만 세기를 바꾼다.
+  // 여기 그 제한이 빠져있어서 체감 속도가 실제보다 수십 배 빠르게 느껴졌다
+  // ("너무 빠르다"는 문제의 핵심 원인). 동일하게 주기 제한을 건다.
+  if (now - ctrl.lastStepTime < getControlPeriodMs()) {
+    ctrl.state = error > 0 ? "INCREASING" : "REDUCING";
+    return;
+  }
+  ctrl.lastStepTime = now;
+
   if (error > 0) {
-    // 목표보다 덜 구부러짐 -- 조심스럽게 증가 (kpUp/maxStepUp, 기존 게인 재사용)
+    // 목표보다 덜 구부러짐 -- 조심스럽게 증가 (kpUp/maxStepUp)
     const step = Math.min(config.control.maxStepUp, config.control.kpUp * error);
     ctrl.intensity = clampWorkingFloat(ctrl.intensity + step);
     ctrl.state = "INCREASING";
   } else {
     // 목표보다 더 구부러짐 -- 펴는 채널은 없지만, 같은 채널의 세기 자체를
     // 낮추면 근육 수축이 약해져서 자연히 풀리는 데 도움이 된다 (kpDown/
-    // maxStepDown, 기존 채널2 게인을 재사용 -- "빠르게 회수"하려던 원래
-    // 의도와 같은 값이라 여기서도 그대로 맞는다).
+    // maxStepDown -- 이제 kpUp/maxStepUp과 같은 값이라 오르내리는 속도가 같다).
     const step = Math.min(config.control.maxStepDown, config.control.kpDown * Math.abs(error));
     ctrl.intensity = clampWorkingFloat(ctrl.intensity - step);
     ctrl.state = "REDUCING";
