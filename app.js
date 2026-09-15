@@ -168,9 +168,15 @@ let liveMirrorActive = false;
 
 // 앱 모드 -- "mirror"(거울 모드) | "action"(행동 보조 모드, 오픈루프) |
 // "personalization"(개인화 모드, 수동 램프업) | "arm"(팔 인식 모드, 팔꿈치
-// 버전 거울 모드). 네 모드는 동시에 활성화되지 않는다 -- setAppMode()가
-// 모드를 바꿀 때마다 이전 모드에서 돌고 있던 걸 전부 정지시킨다 (아래 설명 참고).
+// 버전 거울 모드) | "test"(테스트 모드, 방향키로 채널 직접 테스트). 다섯 모드는
+// 동시에 활성화되지 않는다 -- setAppMode()가 모드를 바꿀 때마다 이전 모드에서
+// 돌고 있던 걸 전부 정지시킨다 (아래 설명 참고).
 let appMode = "mirror";
+
+// 테스트 모드 -- 지금 방향키(←/→)로 누르고 있는 채널(1|2) | null. 카메라·
+// 캘리브레이션·목표비교 없이 순수하게 "이 채널에 지금 전기가 나가는지"만
+// 빠르게 확인하는 용도 (channel_alternate_test.ino와 같은 목적을 웹 UI에서).
+let testKeyChannel = null;
 
 // 행동 보조 모드 상태 -- "물따르기"/"이두운동" 중 하나만 동시에 실행 가능.
 // 거울 모드의 activeChannel/controllerIntensity(채널 1개만 표현 가능한 구조)와
@@ -434,11 +440,13 @@ const modeMirrorBtn = document.getElementById("modeMirrorBtn");
 const modeActionBtn = document.getElementById("modeActionBtn");
 const modePersonalizationBtn = document.getElementById("modePersonalizationBtn");
 const modeArmBtn = document.getElementById("modeArmBtn");
+const modeTestBtn = document.getElementById("modeTestBtn");
 const modeDescriptionText = document.getElementById("modeDescriptionText");
 const mirrorModeCard = document.getElementById("mirrorModeCard");
 const actionModeCard = document.getElementById("actionModeCard");
 const personalizationModeCard = document.getElementById("personalizationModeCard");
 const armModeCard = document.getElementById("armModeCard");
+const testModeCard = document.getElementById("testModeCard");
 
 const actionButtonsRow = document.getElementById("actionButtonsRow");
 const selectedActionText = document.getElementById("selectedActionText");
@@ -451,6 +459,10 @@ const liveMirrorBtn = document.getElementById("liveMirrorBtn");
 const armCalFlatBtn = document.getElementById("armCalFlatBtn");
 const armCalBentBtn = document.getElementById("armCalBentBtn");
 const armResetBtn = document.getElementById("armResetBtn");
+
+// 테스트 모드
+const testIntensityInput = document.getElementById("testIntensityInput");
+const testModeStatusText = document.getElementById("testModeStatusText");
 
 // 행동 보조 모드 (오픈루프 고정 전류)
 const spoonLiftCh1Input = document.getElementById("spoonLiftCh1Input");
@@ -645,6 +657,7 @@ modeMirrorBtn.addEventListener("click", () => setAppMode("mirror"));
 modeActionBtn.addEventListener("click", () => setAppMode("action"));
 modePersonalizationBtn.addEventListener("click", () => setAppMode("personalization"));
 modeArmBtn.addEventListener("click", () => setAppMode("arm"));
+modeTestBtn.addEventListener("click", () => setAppMode("test"));
 
 spoonLiftBtn.addEventListener("click", () => startSequentialRamp("spoonLift", 2000, 3000));
 bicepBtn.addEventListener("click", startBicepRoutine);
@@ -769,6 +782,21 @@ window.addEventListener("keydown", (e) => {
   } else if ((e.key === "a" || e.key === "A") && !isTyping && personalizationRampActive) {
     e.preventDefault();
     stopPersonalizationRamp("사용자가 A 키를 눌러 정지");
+  } else if (appMode === "test" && !isTyping && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+    e.preventDefault();
+    testModeKeyDown(e.code === "ArrowLeft" ? 1 : 2);
+  }
+});
+window.addEventListener("keyup", (e) => {
+  if (appMode === "test" && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+    testModeKeyUp(e.code === "ArrowLeft" ? 1 : 2);
+  }
+});
+window.addEventListener("blur", () => {
+  // 방향키를 누른 채로 알트탭 등으로 창 포커스가 빠지면 keyup이 아예 안 올 수
+  // 있다 -- 자극이 계속 나가는 채로 창만 바뀌는 걸 막기 위한 안전망.
+  if (appMode === "test" && testKeyChannel !== null) {
+    testModeKeyUp(testKeyChannel);
   }
 });
 document.addEventListener("visibilitychange", () => {
@@ -776,9 +804,13 @@ document.addEventListener("visibilitychange", () => {
   // 멈출 수 있어, 자극이 계속되는데 화면 갱신/워치독은 멈추는 위험한 상황이
   // 생길 수 있다. 그래서 탭이 보이지 않게 되는 순간 즉시 안전 정지한다.
   // 행동 보조/개인화 모드는 카메라(isRunning)와 무관하게 setInterval로 계속
-  // 돌 수 있으므로, 이 두 상태도 같이 확인한다.
+  // 돌 수 있으므로, 이 두 상태도 같이 확인한다. 테스트 모드는 방향키를 누르고
+  // 있는 동안에만 나가므로 keyup 대신 즉시 채널을 끈다(전체 비상정지까지는 안 함).
   if (document.hidden && (isRunning || runningActionKey || personalizationRampActive)) {
     triggerEmergencyStop("브라우저 탭이 백그라운드로 전환됨");
+  }
+  if (document.hidden && appMode === "test" && testKeyChannel !== null) {
+    testModeKeyUp(testKeyChannel);
   }
 });
 window.addEventListener("beforeunload", () => {
@@ -1976,6 +2008,7 @@ function setAppMode(mode) {
   if (runningActionKey) stopActionMode("모드 전환");
   if (personalizationRampActive) stopPersonalizationRamp("모드 전환");
   if (armSampling) armSampling = null; // 팔 초기값 측정 중이었으면 중단 (알림 없이 조용히 취소)
+  testKeyChannel = null; // 테스트 모드에서 나가면서 방향키가 눌린 채로 남아있지 않게 확실히 정리
   if (controlEnabled) {
     controlEnabled = false;
     resetStartControlButton();
@@ -1991,10 +2024,12 @@ function setAppMode(mode) {
   actionModeCard.style.display = mode === "action" ? "" : "none";
   personalizationModeCard.style.display = mode === "personalization" ? "" : "none";
   armModeCard.style.display = mode === "arm" ? "" : "none";
+  testModeCard.style.display = mode === "test" ? "" : "none";
   modeMirrorBtn.classList.toggle("selected", mode === "mirror");
   modeActionBtn.classList.toggle("selected", mode === "action");
   modePersonalizationBtn.classList.toggle("selected", mode === "personalization");
   modeArmBtn.classList.toggle("selected", mode === "arm");
+  modeTestBtn.classList.toggle("selected", mode === "test");
 
   modeDescriptionText.innerHTML =
     mode === "mirror"
@@ -2003,7 +2038,9 @@ function setAppMode(mode) {
       ? "<b>행동 보조 모드</b>: 채널1/채널2에 직접 입력한 고정 전류를 그대로 내보냅니다 (카메라 오차 보정 없음)."
       : mode === "personalization"
       ? "<b>개인화 모드</b>: 선택한 채널의 전류를 서서히 올리다가 키보드 A로 정지합니다 (역치/반응 확인용)."
-      : "<b>팔 인식 모드</b>: 왼팔의 팔꿈치 굽힘 정도를 실시간으로 오른팔 목표로 흘려보내고, 카메라로 측정한 오른팔의 실제 굽힘에 맞춰 자극 세기를 자동 조절합니다 (팔 버전 거울 모드).";
+      : mode === "arm"
+      ? "<b>팔 인식 모드</b>: 왼팔의 팔꿈치 굽힘 정도를 실시간으로 오른팔 목표로 흘려보내고, 카메라로 측정한 오른팔의 실제 굽힘에 맞춰 자극 세기를 자동 조절합니다 (팔 버전 거울 모드)."
+      : "<b>테스트 모드</b>: 카메라/캘리브레이션 없이, ←(채널1)/→(채널2) 방향키를 누르고 있는 동안만 그 채널에 고정 세기로 자극을 내보냅니다. 하드웨어가 실제로 잘 연결됐는지 빠르게 확인할 때만 쓰세요.";
 
   targetCompareLabel.textContent = mode === "arm" ? "TARGET (왼팔 · 실시간 연동)" : "TARGET (행동 선택 / 실시간 왼손 연동)";
   actualCompareLabel.textContent = mode === "arm" ? "ACTUAL (오른팔 · 팔꿈치 굽힘)" : "ACTUAL (오른손 · 4손가락 평균)";
@@ -2017,7 +2054,7 @@ function setAppMode(mode) {
       .catch((err) => showToast("❌ 팔 인식 모델 로딩 실패: " + (err.message || err), "bad", 5000));
   }
 
-  logControl(`모드 전환: ${mode === "mirror" ? "거울 모드" : mode === "action" ? "행동 보조 모드" : mode === "personalization" ? "개인화 모드" : "팔 인식 모드"}`);
+  logControl(`모드 전환: ${mode === "mirror" ? "거울 모드" : mode === "action" ? "행동 보조 모드" : mode === "personalization" ? "개인화 모드" : mode === "arm" ? "팔 인식 모드" : "테스트 모드"}`);
 }
 
 // ============================================================================
@@ -2980,6 +3017,66 @@ async function driveHardwareIfNeeded(channel, intensity) {
   const ttl = clampTtl(config.safety.commandTtlMs);
   await serialLink.setIntensity(channel, clampHardware(intensity), ttl);
   lastDrivenChannel = channel;
+}
+
+// ============================================================================
+// 테스트 모드 -- ←(채널1)/→(채널2) 방향키를 누르고 있는 동안만 그 채널에
+// 고정 세기를 내보낸다 (떼면 즉시 정지). 카메라·캘리브레이션·목표비교·연속
+// 자극시간/전체 실험시간 제한 같은 폐루프 쪽 로직은 전혀 거치지 않는다 --
+// 순전히 "이 채널에 지금 전기가 나가는지"만 빠르게 확인하려는 용도.
+//
+// 그래도 절대 건너뛰지 않는 것 두 가지:
+//   1) config.safety.maxIntensity(기본 0) 하드웨어 클램프 -- clampHardware()를
+//      그대로 통과시키므로, ③ 카드에서 안전 최대값을 0보다 크게 설정하지
+//      않으면 여기서도 실제로는 0만 나간다.
+//   2) safetyTripped(비상정지) 상태 -- 걸려있으면 테스트 모드도 막는다.
+// 이 둘은 "번거로운 절차"가 아니라 마지막 하드웨어 안전판이라 그대로 둔다.
+async function testModeKeyDown(channel) {
+  if (safetyTripped) {
+    showToast("⚠ 안전 정지 상태입니다 -- ③ 카드에서 해제 후 사용하세요", "warn");
+    return;
+  }
+  if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
+    showToast("⚠ Arduino가 연결되어 있지 않습니다", "warn");
+    return;
+  }
+
+  testKeyChannel = channel;
+
+  // 다른 채널이 눌려있던 상태였다면 먼저 확실히 끔 (두 채널 동시 자극 방지 --
+  // driveHardwareIfNeeded와 같은 이유).
+  if (lastDrivenChannel !== null && lastDrivenChannel !== channel) {
+    try { await serialLink.setIntensity(lastDrivenChannel, 0, 500); } catch (e) { /* ignore */ }
+  }
+
+  const alreadyArmed = channel === 1 ? armedCh1 : armedCh2;
+  if (!alreadyArmed) {
+    const ok = await serialLink.arm(channel);
+    if (!ok) {
+      showToast(`⚠ 채널${channel} ARM 실패`, "bad");
+      return;
+    }
+    if (channel === 1) armedCh1 = true;
+    else armedCh2 = true;
+  }
+
+  const intensity = clampHardware(Number(testIntensityInput.value) || 0);
+  // TTL을 짧게 잡아서(600ms), 키를 계속 누르고 있으면 브라우저 키 반복 입력이
+  // 이 함수를 계속 다시 불러 SET을 반복 전송하며 TTL을 계속 갱신한다. 혹시
+  // 반복 입력이 하필 늦게 와도 600ms 안에는 자동으로 꺼지니, keyup을 못 받는
+  // 상황(창 포커스 이탈 등)에서도 오래 켜진 채로 남지 않는다.
+  const ttl = clampTtl(600);
+  await serialLink.setIntensity(channel, intensity, ttl);
+  lastDrivenChannel = channel;
+  testModeStatusText.textContent = `채널${channel} 자극 중 (세기 ${intensity}${intensity < (Number(testIntensityInput.value) || 0) ? ", 안전 최대값으로 잘림" : ""})`;
+}
+
+async function testModeKeyUp(channel) {
+  if (testKeyChannel !== channel) return; // 이미 다른 키로 넘어갔거나 이미 꺼진 상태
+  testKeyChannel = null;
+  if (!serialLink || !serialLink.isConnected()) return;
+  try { await serialLink.setIntensity(channel, 0, 500); } catch (e) { /* ignore */ }
+  testModeStatusText.textContent = "대기 중 (←/→ 방향키를 누르고 있으면 자극)";
 }
 
 // ============================================================================
