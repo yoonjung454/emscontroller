@@ -694,6 +694,8 @@ armCalBentBtn.addEventListener("click", () => startArmSampling("bent"));
 armResetBtn.addEventListener("click", () => {
   delete calibration.flat.Arm;
   delete calibration.bent.Arm;
+  delete calibration.flat.ArmSource;
+  delete calibration.bent.ArmSource;
   saveCalibration();
   showToast("🔄 팔 초기값이 초기화되었습니다", "warn");
 });
@@ -1330,8 +1332,12 @@ function processResult(result, poseResult) {
     consecutiveMissArmActual = 0;
     armLostSustained = false;
   }
-  if (armSampling && now - armSampling.startedAt > SAMPLE_TIMEOUT_MS && armSampling.count < SAMPLE_TARGET) {
-    abortArmSampling("측정 시간이 초과되었습니다. 오른팔이 잘 보이도록 하고 다시 시도해주세요.");
+  if (
+    armSampling &&
+    now - armSampling.startedAt > SAMPLE_TIMEOUT_MS &&
+    (armSampling.counts.source < SAMPLE_TARGET || armSampling.counts.actual < SAMPLE_TARGET)
+  ) {
+    abortArmSampling("측정 시간이 초과되었습니다. 양팔이 잘 보이도록 하고 다시 시도해주세요.");
   }
 
   // 팔 인식 모드에서는 손가락 표/평균 대신 팔 값을 쓴다 (아래 폐루프 제어부터는
@@ -1633,37 +1639,52 @@ function processArmResult(poseResult) {
 
     const rawBend = calculateArmBend(worldLandmarks, arm.idx.shoulder, arm.idx.elbow, arm.idx.wrist);
     armLatestSmoothed[role] = armFilters[role].push(rawBend);
-    armLatestPercent[role] = percentFor("Arm", armLatestSmoothed[role]);
+    // ⚠ 버그 수정: 예전엔 오른팔(actual)만 보정하고 그 하나의 펴짐/구부림
+    // 각도를 왼팔(source)에도 그대로 재사용했다 -- "두 팔의 유연성이 비슷할
+    // 것"이라는 가정인데, 실제로는 카메라 각도/팔 길이 차이 등으로 같은
+    // 각도만큼 구부려도 왼팔 %가 더 낮게 나오는 문제가 있었다(그리고 이 값이
+    // 팔 인식 모드에서 TARGET으로 그대로 쓰이므로 단순 표시 오차가 아니라
+    // 실제 목표가 틀어지는 문제였음). 이제 왼팔(source)은 별도의 "ArmSource"
+    // 보정값을 쓴다 -- 아래 팔 초기값 측정에서 양팔을 동시에 재서 각자
+    // 보정값을 만든다.
+    armLatestPercent[role] = percentFor(role === "source" ? "ArmSource" : "Arm", armLatestSmoothed[role]);
 
-    if (armSampling && role === "actual") {
-      armSampling.sum += rawBend;
-      armSampling.count += 1;
+    if (armSampling) {
+      armSampling.sums[role] += rawBend;
+      armSampling.counts[role] += 1;
       updateArmSamplingUI();
-      if (armSampling.count >= SAMPLE_TARGET) finishArmSampling();
+      if (armSampling.counts.source >= SAMPLE_TARGET && armSampling.counts.actual >= SAMPLE_TARGET) {
+        finishArmSampling();
+      }
     }
   });
 }
 
-// ---- 팔 초기값(펴짐/구부림) 측정 -- 손가락 캘리브레이션과 같은 방식, 값 하나뿐 ----
+// ---- 팔 초기값(펴짐/구부림) 측정 -- 왼팔/오른팔을 동시에 재서 각자 보정값을
+// 따로 만든다 (위 버그 설명 참고). 캘리브레이션 자세(쫙 펴짐/최대한 구부림)는
+// 양팔을 대칭으로 유지하기 자연스러워서, 사용자가 추가로 할 일은 없다 --
+// 버튼 2개(①②)는 그대로다.
 function startArmSampling(mode) {
   if (!isRunning || armSampling) return;
-  armSampling = { mode, sum: 0, count: 0, startedAt: performance.now() };
+  armSampling = { mode, sums: { source: 0, actual: 0 }, counts: { source: 0, actual: 0 }, startedAt: performance.now() };
   const label = mode === "flat" ? "펴짐" : "구부림";
-  logControl(`오른팔 ${label} 초기값 측정 시작 -- 그대로 유지하세요`);
-  showToast(`📏 오른팔 ${label} 초기값 측정 중... 팔을 그대로 유지하세요`, "ok", 2000);
+  logControl(`양팔 ${label} 초기값 측정 시작 -- 양팔을 그대로 유지하세요`);
+  showToast(`📏 양팔 ${label} 초기값 측정 중... 양팔을 그대로 유지하세요`, "ok", 2000);
 }
 function updateArmSamplingUI() {
   if (!armSampling) return;
-  logControlProgress(`팔 초기값 측정 중... ${armSampling.count}/${SAMPLE_TARGET}`);
+  const done = Math.min(armSampling.counts.source, armSampling.counts.actual);
+  logControlProgress(`팔 초기값 측정 중... ${done}/${SAMPLE_TARGET}`);
 }
 function finishArmSampling() {
-  const { mode, sum, count } = armSampling;
-  calibration[mode].Arm = sum / count;
+  const { mode, sums, counts } = armSampling;
+  calibration[mode].Arm = sums.actual / counts.actual;
+  calibration[mode].ArmSource = sums.source / counts.source;
   saveCalibration();
   armSampling = null;
   const label = mode === "flat" ? "펴짐" : "구부림";
-  logControl(`팔 ${label} 초기값 측정 완료`);
-  showToast(`✅ 오른팔 ${label} 초기값 측정 완료`, "ok");
+  logControl(`양팔 ${label} 초기값 측정 완료`);
+  showToast(`✅ 양팔 ${label} 초기값 측정 완료`, "ok");
 }
 function abortArmSampling(message) {
   armSampling = null;
