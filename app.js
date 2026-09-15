@@ -199,14 +199,20 @@ const DEFAULT_CONFIG = {
   presets: { light: 30, half: 60, strong: 90 },
   control: {
     // 오르는 속도(kpUp/maxStepUp)와 내리는 속도(kpDown/maxStepDown)를 동일하게
-    // 맞췄다. 중간값(0.017/0.85) -> 3배(0.051/2.55) -> 거기서 다시 2배.
+    // 맞췄다. 중간값(0.017/0.85) -> 3배(0.051/2.55) -> 거기서 다시 2배(0.102/5.1)
+    // -> 팔 인식 모드에서 "큰 폭으로 곱해서 뛰는 것처럼 보인다"는 피드백을 받고,
+    // maxStep을 1로 낮춰서 진짜 "1씩 점진적으로" 올라가게 바꾸고, 그만큼 줄어든
+    // 한 스텝당 양을 보충하려고 주기(controlPeriodMs)도 6000 -> 2250으로 줄였다.
+    // 결과적으로 큰 오차 구간(예전엔 2400ms마다 5.1씩)에서의 속도가 옛날의 절반
+    // 정도(900ms마다 1씩)가 되어, 목표 도달 시간이 대략 2배가 된다 -- 대신
+    // 숫자가 뛰지 않고 1씩 세는 것처럼 부드럽게 올라간다.
     kpUp: 0.102,
     kpDown: 0.102,
     tolerancePercent: 5,
     successHoldSeconds: 1.5,
-    maxStepUp: 5.1,
-    maxStepDown: 5.1,
-    controlPeriodMs: 6000 // 근육이 반응할 시간을 더 주기 위해 4초 -> 6초
+    maxStepUp: 1,
+    maxStepDown: 1,
+    controlPeriodMs: 2250 // getControlPeriodMs() = 2250/2.5 = 900ms마다 최대 1씩
   },
   safety: {
     maxIntensity: 0,
@@ -214,7 +220,11 @@ const DEFAULT_CONFIG = {
     heartbeatIntervalMs: 400,
     commandTtlMs: 1500,
     maxCommandTtlMs: 5000,
-    maxContinuousStimSeconds: 10,
+    // 목표에 도달해 LOCKED로 계속 자극을 유지하는 상태(팔 인식 모드 등)가 이
+    // 제한에 그대로 걸려 "목표 도달하고 몇 초 뒤 혼자 꺼짐"으로 보였다 --
+    // 가정용 저전류 기기라는 전제로 10초 -> 60초로 늘림 (③ 안전 설정 카드에서
+    // 언제든 사람이 더 조정 가능).
+    maxContinuousStimSeconds: 60,
     totalExperimentSeconds: 300,
     cooldownSeconds: 5
   },
@@ -872,7 +882,16 @@ function loadConfig() {
         // 있었다 (실제로 이 문제로 속도 조정이 안 먹혔음). 그래서 control은
         // 저장된 값을 무시하고 항상 최신 DEFAULT_CONFIG.control을 그대로 쓴다.
         control: { ...DEFAULT_CONFIG.control },
-        safety: { ...DEFAULT_CONFIG.safety, ...(parsed.safety || {}) },
+        safety: (() => {
+          const merged = { ...DEFAULT_CONFIG.safety, ...(parsed.safety || {}) };
+          // 예전 기본값(10초)이 이미 저장돼 있으면, 코드에서 기본값을 60초로
+          // 올려도 저장된 값이 우선(병합)돼서 "목표 도달 후 몇 초 뒤 혼자 꺼짐"이
+          // 그대로 재현된다. 10초 이하로 저장돼 있으면 예전 기본값을 그대로
+          // 들고 있던 것으로 보고 새 기본값(60초)으로 올려준다 -- 사람이 직접
+          // 10초보다 더 길게 늘려둔 값은 그대로 유지된다.
+          if (merged.maxContinuousStimSeconds <= 10) merged.maxContinuousStimSeconds = 60;
+          return merged;
+        })(),
         serial: { ...DEFAULT_CONFIG.serial, ...(parsed.serial || {}) }
       };
     }
@@ -1207,10 +1226,14 @@ function renderLoop() {
     ctx.restore();
 
     const result = handLandmarker.detectForVideo(canvas, performance.now());
-    // 팔꿈치 측정이 필요한 경우(팔 인식 모드, 또는 행동 보조 모드에서 폐루프
-    // 루틴이 실행 중일 때)만 Pose 모델도 같이 돌린다 -- 다른 모드에서는 손 인식
-    // 하나로 충분하고, 매 프레임 모델을 하나 더 돌리는 연산 비용을 아낀다.
-    const needsPose = (appMode === "arm" || runningActionKey !== null) && poseLandmarker;
+    // 팔꿈치 측정이 필요한 경우(팔 인식 모드, 테스트 모드, 또는 행동 보조
+    // 모드에서 폐루프 루틴이 실행 중일 때)만 Pose 모델도 같이 돌린다 -- 거울
+    // 모드는 손 하나로 충분해서 제외(매 프레임 모델을 하나 더 돌리는 연산
+    // 비용을 아낌). "거울 모드 제외 전부 팔 인식 가능하게" 요청으로 테스트
+    // 모드도 추가 -- 단, 테스트 모드는 여전히 카메라 없이도 방향키로 전류를
+    // 낼 수 있다(테스트 모드 키 입력은 이 값을 전혀 참조하지 않음); 켜져
+    // 있으면 화면에 팔/손 인식 결과가 참고용으로 같이 보일 뿐이다.
+    const needsPose = (appMode === "arm" || appMode === "test" || runningActionKey !== null) && poseLandmarker;
     const poseResult = needsPose
       ? poseLandmarker.detectForVideo(canvas, performance.now())
       : null;
@@ -2155,17 +2178,18 @@ function setAppMode(mode) {
     mode === "mirror"
       ? "<b>거울 모드</b>: 행동 버튼(카메라로 오차를 계속 보정) 또는 실시간 왼손 연동으로 오른손을 목표에 맞춥니다."
       : mode === "action"
-      ? "<b>행동 보조 모드</b>: 채널1/채널2에 직접 입력한 고정 전류를 그대로 내보냅니다 (카메라 오차 보정 없음). 개인화 측정(수동 램프업)도 이 안에 함께 있습니다."
+      ? "<b>행동 보조 모드</b>: 손(채널1)·팔꿈치(채널2) 목표 %만 입력하면, 카메라로 실제 굽힘을 측정해가며 자극 세기를 자동으로 찾아 목표에 맞춥니다 (자동 세팅 폐루프, 사람마다 다른 반응에 자동으로 맞춰짐)."
       : mode === "arm"
       ? "<b>팔 인식 모드</b>: 왼팔의 팔꿈치 굽힘 정도를 실시간으로 오른팔 목표로 흘려보내고, 카메라로 측정한 오른팔의 실제 굽힘에 맞춰 자극 세기를 자동 조절합니다 (팔 버전 거울 모드)."
-      : "<b>테스트 모드</b>: 카메라/캘리브레이션 없이, ←(채널1)/→(채널2) 방향키를 누르고 있는 동안만 그 채널에 고정 세기로 자극을 내보냅니다. 하드웨어가 실제로 잘 연결됐는지 빠르게 확인할 때만 쓰세요.";
+      : "<b>테스트 모드</b>: 캘리브레이션 없이, ←(채널1)/→(채널2) 방향키를 누르고 있는 동안만 그 채널에 고정 세기로 자극을 내보냅니다 (하드웨어 연결을 빠르게 확인할 때 사용). 카메라를 켜두면 손/팔 인식 결과도 참고용으로 함께 표시되지만, 방향키 자극 자체는 카메라 없이도 동작합니다.";
 
   targetCompareLabel.textContent = mode === "arm" ? "TARGET (왼팔 · 실시간 연동)" : "TARGET (행동 선택 / 실시간 왼손 연동)";
   actualCompareLabel.textContent = mode === "arm" ? "ACTUAL (오른팔 · 팔꿈치 굽힘)" : "ACTUAL (오른손 · 4손가락 평균)";
 
-  // 팔 인식 모드는 아직 모델을 안 불러왔을 수 있으니(perf를 위해 지연 로딩) 이
-  // 시점에 미리 불러오기 시작 -- 카메라 실행 버튼을 누르기 전에 미리 받아둔다.
-  if (mode === "arm" && !poseLandmarker) {
+  // 팔 인식이 필요한 모드(팔 인식/테스트)는 아직 모델을 안 불러왔을 수 있으니
+  // (perf를 위해 지연 로딩) 이 시점에 미리 불러오기 시작 -- 카메라 실행 버튼을
+  // 누르기 전에 미리 받아둔다.
+  if ((mode === "arm" || mode === "test") && !poseLandmarker) {
     showToast("🦾 팔 인식 모델을 불러오는 중입니다...", "ok", 3000);
     ensurePoseLandmarker()
       .then(() => showToast("✅ 팔 인식 모델 준비 완료", "ok"))
@@ -2428,11 +2452,15 @@ async function startSpoonLiftClosedLoop() {
   logControl(`🎬 행동 보조 모드: ${def.label} 시작 (손 목표=${handTarget}%, 팔꿈치 목표=${elbowTarget}%, 자동 세팅)`);
   showToast(`▶ ${def.label} 실행 (자동으로 세기를 찾는 중)`, "ok");
 
-  const state = { handTarget, elbowTarget };
+  const state = { handTarget, elbowTarget, phase: "hand" }; // hand -> elbow -> done (순차 진행)
   spoonLiftTick(state); // 즉시 한 번 전송
   actionModeInterval = setInterval(() => spoonLiftTick(state), 400);
 }
 
+// 수저 들기 보조는 손(채널1)과 팔꿈치(채널2)를 동시에 켜두지 않는다 -- 먼저
+// 손이 목표(그립)에 도달하면 손 쪽 전류를 멈추고, 그다음 팔꿈치(채널2)로
+// 넘어가라고 안내한 뒤 팔꿈치만 목표를 향해 폐루프로 움직인다.
+// (이두운동은 손을 운동 내내 계속 쥐고 있어야 해서 동시 유지 방식 그대로 둠.)
 function spoonLiftTick(state) {
   if (safetyTripped) { stopActionMode("안전 정지 상태"); return; }
   if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) { stopActionMode("시리얼 연결 끊김"); return; }
@@ -2447,15 +2475,35 @@ function spoonLiftTick(state) {
   if (handLostSustained || armLostSustained) {
     actionHandCtrl.state = "WAITING_FOR_HAND";
     actionElbowCtrl.state = "WAITING_FOR_HAND";
-  } else {
+  } else if (state.phase === "hand") {
     stepFlexOnlyAxis(actionHandCtrl, state.handTarget, handAverage, now);
+    if (actionHandCtrl.state === "LOCKED") {
+      // 손 목표 도달 -- 전류를 멈추고 채널2(팔꿈치)로 넘어간다.
+      actionHandCtrl.intensity = 0;
+      actionHandCtrl.state = "STANDBY";
+      actionHandCtrl.successSince = null;
+      state.phase = "elbow";
+      logControl("✅ 손(채널1) 목표 도달 -- 전류를 멈추고 팔꿈치(채널2)로 진행합니다");
+      showToast("✅ 손 목표 도달! 이제 팔꿈치를 들어올릴게요", "ok", 4000);
+    }
+  } else if (state.phase === "elbow") {
+    actionHandCtrl.intensity = 0;
+    actionHandCtrl.state = "STANDBY";
     stepFlexOnlyAxis(actionElbowCtrl, state.elbowTarget, armLatestPercent.actual, now);
+    if (actionElbowCtrl.state === "LOCKED" && state.phase !== "done") {
+      state.phase = "done";
+      logControl("✅ 팔꿈치(채널2) 목표 도달 -- 자세를 유지합니다");
+      showToast("✅ 수저 들기 보조 완료 -- 자세 유지 중", "ok", 4000);
+    }
   }
 
+  const phaseLabel = state.phase === "hand" ? "① 손 그립 중"
+    : state.phase === "elbow" ? "② 팔꿈치 들어올리는 중"
+    : "완료 -- 자세 유지 중";
   spoonLiftHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
   spoonLiftElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
   actionModeStatusText.textContent =
-    `수저 들기 보조: 손 ${Math.round(handAverage ?? 0)}%/${state.handTarget}% · 팔꿈치 ${Math.round(armLatestPercent.actual ?? 0)}%/${state.elbowTarget}%`;
+    `수저 들기 보조: ${phaseLabel} -- 손 ${Math.round(handAverage ?? 0)}%/${state.handTarget}% · 팔꿈치 ${Math.round(armLatestPercent.actual ?? 0)}%/${state.elbowTarget}%`;
 
   driveArmHardwareIfNeeded(actionHandCtrl.intensity, actionElbowCtrl.intensity)
     .catch((err) => logControl("행동 보조 모드 전송 오류: " + err.message));
