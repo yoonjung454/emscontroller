@@ -179,7 +179,7 @@ let appMode = "mirror";
 // 캘리브레이션·목표비교 없이 순수하게 "이 채널에 지금 전기가 나가는지"만
 // 빠르게 확인하는 용도 (channel_alternate_test.ino와 같은 목적을 웹 UI에서).
 let testKeyChannel = null;
-let testLastSendTime = 0; // 마지막으로 실제 SET을 보낸 시각 -- 아래 testModeKeyDown 참고
+let testResendInterval = null; // 방향키를 누르고 있는 동안 재전송을 계속 돌리는 타이머 -- 아래 testModeKeyDown 참고
 
 // 행동 보조 모드 상태 -- "물따르기"/"이두운동" 중 하나만 동시에 실행 가능.
 // 거울 모드의 activeChannel/controllerIntensity(채널 1개만 표현 가능한 구조)와
@@ -2162,6 +2162,7 @@ function setAppMode(mode) {
   if (personalizationRampActive) stopPersonalizationRamp("모드 전환");
   if (armSampling) armSampling = null; // 팔 초기값 측정 중이었으면 중단 (알림 없이 조용히 취소)
   testKeyChannel = null; // 테스트 모드에서 나가면서 방향키가 눌린 채로 남아있지 않게 확실히 정리
+  if (testResendInterval) { clearInterval(testResendInterval); testResendInterval = null; }
   if (controlEnabled) {
     controlEnabled = false;
     resetStartControlButton();
@@ -3164,28 +3165,26 @@ async function driveArmHardwareIfNeeded(handIntensity, elbowIntensity) {
 //      않으면 여기서도 실제로는 0만 나간다.
 //   2) safetyTripped(비상정지) 상태 -- 걸려있으면 테스트 모드도 막는다.
 // 이 둘은 "번거로운 절차"가 아니라 마지막 하드웨어 안전판이라 그대로 둔다.
+const TEST_RESEND_MS = 200; // TTL(600ms)보다 충분히 짧게 재전송 -- 아래 testModeKeyDown 참고
+
 async function testModeKeyDown(channel) {
   if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
     showToast("⚠ Arduino가 연결되어 있지 않습니다", "warn");
     return;
   }
 
-  // 브라우저는 키를 누르고 있으면 keydown을 아주 빠르게(수십ms 간격) 반복
-  // 발생시킨다. 예전엔 그때마다 매번 SET을 새로 보냈는데, 시리얼 명령이
-  // 순서대로 처리되는 큐(WebSerialLink._chain)에 계속 쌓여서, 키를 뗀 순간
-  // 보내는 "정지(0)" 명령이 그 밀린 큐 뒤에 서서 한참 늦게 처리되는 문제가
-  // 있었다 (카메라 프레임마다 보내던 예전 버그와 같은 종류). 그래서 실제
-  // 전송은 testLastSendTime 기준으로 최소 간격을 두고, 그 사이의 반복
-  // keydown은 새로 보내지 않고 건너뛴다 -- TTL(600ms)보다 훨씬 짧은 간격으로만
-  // 새로고침하면 충분하고, 그래야 keyup이 큐 맨 앞에 가깝게 도착해서 즉시 먹힌다.
-  const now = performance.now();
-  const alreadyActiveSameChannel = testKeyChannel === channel;
-  testKeyChannel = channel;
+  // ⚠ 버그 수정: 예전엔 브라우저의 keydown "자동 반복" 이벤트가 올 때마다
+  // 매번 새로 SET을 보내는 식이었다. 근데 이 자동 반복 간격은 OS/브라우저
+  // 설정에 따라 들쭉날쭉해서(키보드 반복 속도가 느리게 설정된 PC 등), 다음
+  // 반복 이벤트가 오기 전에 TTL(600ms)이 먼저 끝나버리면 그 사이 잠깐씩
+  // 전류가 끊기는 "주기적으로 끊김" 증상이 생겼다. 지금은 keydown 한 번(눌린
+  // 첫 순간)에만 반응하고, 그때부터는 이 함수가 아니라 별도 setInterval
+  // (testResendInterval)이 TEST_RESEND_MS(200ms)마다 알아서 계속 재전송한다
+  // -- 브라우저/OS의 키 반복 타이밍과 완전히 무관해져서, 키를 누르고 있는 한
+  // 절대 안 끊긴다.
+  if (testKeyChannel === channel) return; // 이미 이 채널로 눌려 있는 중 -- 반복 keydown은 무시(재전송은 인터벌이 담당)
 
-  if (alreadyActiveSameChannel && now - testLastSendTime < 150) {
-    return; // 최근에 이미 보냈음 -- 이번 반복 입력은 건너뜀
-  }
-  testLastSendTime = now;
+  if (testResendInterval) { clearInterval(testResendInterval); testResendInterval = null; }
 
   // 다른 채널이 눌려있던 상태였다면 먼저 확실히 끔 (두 채널 동시 자극 방지 --
   // driveHardwareIfNeeded와 같은 이유).
@@ -3193,12 +3192,21 @@ async function testModeKeyDown(channel) {
     try { await serialLink.setIntensity(lastDrivenChannel, 0, 500); } catch (e) { /* ignore */ }
   }
 
+  testKeyChannel = channel;
+  const ok = await sendTestPulse(channel);
+  if (!ok) return;
+  testResendInterval = setInterval(() => sendTestPulse(channel), TEST_RESEND_MS);
+}
+
+// 실제로 한 번 SET을 내보내는 부분 -- testModeKeyDown(최초 1회)과
+// testResendInterval(그 뒤로 계속)이 공유해서 부른다.
+async function sendTestPulse(channel) {
   const alreadyArmed = channel === 1 ? armedCh1 : armedCh2;
   if (!alreadyArmed) {
     const ok = await serialLink.arm(channel);
     if (!ok) {
       showToast(`⚠ 채널${channel} ARM 실패`, "bad");
-      return;
+      return false;
     }
     if (channel === 1) armedCh1 = true;
     else armedCh2 = true;
@@ -3210,17 +3218,19 @@ async function testModeKeyDown(channel) {
   // 세기를 따로 입력받아 각자 다른 값으로 테스트할 수 있게 한다.
   const intensityInput = channel === 1 ? testIntensityCh1Input : testIntensityCh2Input;
   const intensity = Math.round(Math.min(100, Math.max(0, Number(intensityInput.value) || 0)));
-  // TTL을 짧게 잡아서(600ms), 위 150ms 간격으로 재전송하며 TTL을 계속 갱신한다.
-  // 혹시 재전송이 하필 늦어도 600ms 안에는 자동으로 꺼지니, keyup을 못 받는
-  // 상황(창 포커스 이탈 등)에서도 오래 켜진 채로 남지 않는다.
+  // TTL을 짧게 잡아서(600ms), TEST_RESEND_MS(200ms) 간격으로 재전송하며 TTL을
+  // 계속 갱신한다. 혹시 재전송이 하필 늦어도 600ms 안에는 자동으로 꺼지니,
+  // keyup을 못 받는 상황(창 포커스 이탈 등)에서도 오래 켜진 채로 남지 않는다.
   await serialLink.setIntensity(channel, intensity, 600);
   lastDrivenChannel = channel;
   testModeStatusText.textContent = `채널${channel} 자극 중 (세기 ${intensity})`;
+  return true;
 }
 
 async function testModeKeyUp(channel) {
   if (testKeyChannel !== channel) return; // 이미 다른 키로 넘어갔거나 이미 꺼진 상태
   testKeyChannel = null;
+  if (testResendInterval) { clearInterval(testResendInterval); testResendInterval = null; }
   if (!serialLink || !serialLink.isConnected()) return;
   try { await serialLink.setIntensity(channel, 0, 500); } catch (e) { /* ignore */ }
   testModeStatusText.textContent = "대기 중 (←/→ 방향키를 누르고 있으면 자극)";
