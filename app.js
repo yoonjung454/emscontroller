@@ -3195,36 +3195,56 @@ async function testModeKeyDown(channel) {
   testKeyChannel = channel;
   const ok = await sendTestPulse(channel);
   if (!ok) return;
-  testResendInterval = setInterval(() => sendTestPulse(channel), TEST_RESEND_MS);
+  testResendInterval = setInterval(() => {
+    // ⚠ 버그 수정(2차): TEST_RESEND_MS마다 무조건 새로 sendTestPulse를 부르면,
+    // SET 하나가 실제로 응답(OK/ERROR)받는 데 200ms보다 오래 걸릴 때마다(직렬
+    // 통신 왕복 지연, 아두이노 쪽 처리 지연 등) WebSerialLink의 명령 큐(_chain)에
+    // 다음 SET이 계속 쌓인다. 큐가 밀리기 시작하면 실제로 하드웨어에 도착하는
+    // 시점이 점점 늦어져서, 앞서 보낸 SET의 TTL(600ms)이 먼저 만료돼 채널이
+    // 꺼졌다가 밀려있던 다음 SET이 뒤늦게 도착해서 다시 켜지는 식으로 "왔다
+    // 안 왔다"가 반복된다. 이전 전송이 아직 응답을 못 받은 상태면 이번 틱은
+    // 그냥 건너뛰어서(새로 쌓지 않음) 큐가 절대 밀리지 않게 한다 -- 실제 재전송
+    // 간격이 통신 왕복 속도에 맞춰 자연스럽게 늘어날 뿐, 밀려서 끊기지는 않는다.
+    if (testPulseInFlight) return;
+    sendTestPulse(channel);
+  }, TEST_RESEND_MS);
 }
+
+let testPulseInFlight = false; // 위 setInterval 콜백의 큐 적체 방지 가드
 
 // 실제로 한 번 SET을 내보내는 부분 -- testModeKeyDown(최초 1회)과
 // testResendInterval(그 뒤로 계속)이 공유해서 부른다.
 async function sendTestPulse(channel) {
-  const alreadyArmed = channel === 1 ? armedCh1 : armedCh2;
-  if (!alreadyArmed) {
-    const ok = await serialLink.arm(channel);
-    if (!ok) {
-      showToast(`⚠ 채널${channel} ARM 실패`, "bad");
-      return false;
+  testPulseInFlight = true;
+  try {
+    const alreadyArmed = channel === 1 ? armedCh1 : armedCh2;
+    if (!alreadyArmed) {
+      const ok = await serialLink.arm(channel);
+      if (!ok) {
+        showToast(`⚠ 채널${channel} ARM 실패`, "bad");
+        return false;
+      }
+      if (channel === 1) armedCh1 = true;
+      else armedCh2 = true;
     }
-    if (channel === 1) armedCh1 = true;
-    else armedCh2 = true;
-  }
 
-  // ③ 카드의 안전 최대값(clampHardware)을 거치지 않고, 입력한 세기를 0~100
-  // 범위만 맞춰서 그대로 내보낸다 (테스트 모드는 전기 주기 + 세기 설정, 그
-  // 두 가지만 하도록 요청받아 나머지 안전 게이트는 여기서는 뺐다). 채널1/채널2
-  // 세기를 따로 입력받아 각자 다른 값으로 테스트할 수 있게 한다.
-  const intensityInput = channel === 1 ? testIntensityCh1Input : testIntensityCh2Input;
-  const intensity = Math.round(Math.min(100, Math.max(0, Number(intensityInput.value) || 0)));
-  // TTL을 짧게 잡아서(600ms), TEST_RESEND_MS(200ms) 간격으로 재전송하며 TTL을
-  // 계속 갱신한다. 혹시 재전송이 하필 늦어도 600ms 안에는 자동으로 꺼지니,
-  // keyup을 못 받는 상황(창 포커스 이탈 등)에서도 오래 켜진 채로 남지 않는다.
-  await serialLink.setIntensity(channel, intensity, 600);
-  lastDrivenChannel = channel;
-  testModeStatusText.textContent = `채널${channel} 자극 중 (세기 ${intensity})`;
-  return true;
+    // ③ 카드의 안전 최대값(clampHardware)을 거치지 않고, 입력한 세기를 0~100
+    // 범위만 맞춰서 그대로 내보낸다 (테스트 모드는 전기 주기 + 세기 설정, 그
+    // 두 가지만 하도록 요청받아 나머지 안전 게이트는 여기서는 뺐다). 채널1/채널2
+    // 세기를 따로 입력받아 각자 다른 값으로 테스트할 수 있게 한다.
+    const intensityInput = channel === 1 ? testIntensityCh1Input : testIntensityCh2Input;
+    const intensity = Math.round(Math.min(100, Math.max(0, Number(intensityInput.value) || 0)));
+    // TTL을 짧게 잡아서(1000ms), TEST_RESEND_MS(200ms)마다(위 가드로 밀리지 않게)
+    // 재전송하며 TTL을 계속 갱신한다. 혹시 재전송이 하필 늦어도 1초 안에는
+    // 자동으로 꺼지니, keyup을 못 받는 상황(창 포커스 이탈 등)에서도 오래 켜진
+    // 채로 남지 않는다.
+    await serialLink.setIntensity(channel, intensity, 1000);
+    lastDrivenChannel = channel;
+    testModeStatusText.textContent = `채널${channel} 자극 중 (세기 ${intensity})`;
+    return true;
+  } finally {
+    testPulseInFlight = false;
+  }
 }
 
 async function testModeKeyUp(channel) {
