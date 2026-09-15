@@ -359,6 +359,7 @@ const armDetectedThisFrame = { source: false, actual: false };
 let consecutiveMissArmActual = 0;
 let armLostSustained = true; // ACTUAL(오른팔) 기준, "팔 인식" 모드의 안전 판단에 사용
 let armSampling = null; // 팔 초기값(펴짐/구부림) 측정 -- { mode, sum, count, startedAt }
+let invertArmSides = false; // POSE_ARM_A가 반대로(actual로) 인식되면 체크박스로 뒤집기 (invertHandedness와 동일한 개념)
 
 const latestSmoothed = { source: {}, actual: {} }; // role -> finger -> degrees
 const latestPercent = { source: {}, actual: {} }; // role -> finger -> 0-100 | null
@@ -461,6 +462,7 @@ const armResetBtn = document.getElementById("armResetBtn");
 const armHandTargetDisplay = document.getElementById("armHandTargetDisplay");
 const armHandActualDisplay = document.getElementById("armHandActualDisplay");
 const armHandErrorDisplay = document.getElementById("armHandErrorDisplay");
+const invertArmSidesCheckbox = document.getElementById("invertArmSidesCheckbox");
 
 // 테스트 모드
 const testIntensityInput = document.getElementById("testIntensityInput");
@@ -634,6 +636,7 @@ if (!("serial" in navigator)) {
 
 runBtn.addEventListener("click", () => (isRunning ? stopRun() : startRun()));
 invertHandsCheckbox.addEventListener("change", () => { invertHandedness = invertHandsCheckbox.checked; });
+invertArmSidesCheckbox.addEventListener("change", () => { invertArmSides = invertArmSidesCheckbox.checked; });
 calFlatBtn.addEventListener("click", () => startSampling("flat"));
 calBentBtn.addEventListener("click", () => startSampling("bent"));
 resetBtn.addEventListener("click", () => {
@@ -1482,16 +1485,17 @@ function processArmResult(poseResult) {
 
   if (candidates.length === 0) return;
 
-  // 두 팔이 다 보이면 x좌표로 왼쪽/오른쪽을 정렬해서 나눠주고, 한쪽만 보이면
-  // 화면 가운데(0.5) 기준으로 어느 쪽인지만 판단한다.
-  candidates.sort((a, b) => a.elbowPt.x - b.elbowPt.x);
-  const roles = candidates.length === 2
-    ? ["source", "actual"]
-    : [candidates[0].elbowPt.x < 0.5 ? "source" : "actual"];
-
-  candidates.forEach((arm, i) => {
-    const role = roles[i];
-    if (!role || armDetectedThisFrame[role]) return; // 이미 이번 프레임에 그 역할이 처리됨
+  // 예전엔 "화면에서 x좌표가 더 작은 쪽 = TARGET"으로 매 프레임 다시 판정했는데,
+  // 팔을 굽혔다 펴면 팔꿈치 x좌표가 계속 움직여서 두 팔이 화면 가운데 근처에서
+  // 겹치거나 지나갈 때마다 TARGET/ACTUAL이 순간적으로 뒤바뀌는 문제가 있었다
+  // (목표가 갑자기 튀면서 채널이 계속 전환되고, 그 와중에 한쪽 신뢰도가 잠깐
+  // 떨어지면 "놓침"으로 판정돼 비상정지까지 걸림). 손처럼 "이 팔(A)은 항상
+  // source, 저 팔(B)은 항상 actual"로 고정하고, 반대로 인식되면
+  // invertArmSides 체크박스로 뒤집는 방식으로 바꿨다 -- 움직여도 역할이 안 바뀐다.
+  candidates.forEach((arm) => {
+    const isArmA = arm.idx === POSE_ARM_A;
+    const role = invertArmSides ? (isArmA ? "actual" : "source") : (isArmA ? "source" : "actual");
+    if (armDetectedThisFrame[role]) return; // 이미 이번 프레임에 그 역할이 처리됨 (정상적으론 안 생김)
     armDetectedThisFrame[role] = true;
 
     drawArmSkeleton(arm.shoulderPt, arm.elbowPt, arm.wristPt, role);
