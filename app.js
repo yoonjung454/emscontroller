@@ -3032,10 +3032,6 @@ async function driveHardwareIfNeeded(channel, intensity) {
 //   2) safetyTripped(비상정지) 상태 -- 걸려있으면 테스트 모드도 막는다.
 // 이 둘은 "번거로운 절차"가 아니라 마지막 하드웨어 안전판이라 그대로 둔다.
 async function testModeKeyDown(channel) {
-  if (safetyTripped) {
-    showToast("⚠ 안전 정지 상태입니다 -- ③ 카드에서 해제 후 사용하세요", "warn");
-    return;
-  }
   if (!serialLink || !serialLink.isConnected() || !serialLink.handshakeOk) {
     showToast("⚠ Arduino가 연결되어 있지 않습니다", "warn");
     return;
@@ -3060,15 +3056,17 @@ async function testModeKeyDown(channel) {
     else armedCh2 = true;
   }
 
-  const intensity = clampHardware(Number(testIntensityInput.value) || 0);
+  // ③ 카드의 안전 최대값(clampHardware)을 거치지 않고, 입력한 세기를 0~100
+  // 범위만 맞춰서 그대로 내보낸다 (테스트 모드는 전기 주기 + 세기 설정, 그
+  // 두 가지만 하도록 요청받아 나머지 안전 게이트는 여기서는 뺐다).
+  const intensity = Math.round(Math.min(100, Math.max(0, Number(testIntensityInput.value) || 0)));
   // TTL을 짧게 잡아서(600ms), 키를 계속 누르고 있으면 브라우저 키 반복 입력이
   // 이 함수를 계속 다시 불러 SET을 반복 전송하며 TTL을 계속 갱신한다. 혹시
   // 반복 입력이 하필 늦게 와도 600ms 안에는 자동으로 꺼지니, keyup을 못 받는
   // 상황(창 포커스 이탈 등)에서도 오래 켜진 채로 남지 않는다.
-  const ttl = clampTtl(600);
-  await serialLink.setIntensity(channel, intensity, ttl);
+  await serialLink.setIntensity(channel, intensity, 600);
   lastDrivenChannel = channel;
-  testModeStatusText.textContent = `채널${channel} 자극 중 (세기 ${intensity}${intensity < (Number(testIntensityInput.value) || 0) ? ", 안전 최대값으로 잘림" : ""})`;
+  testModeStatusText.textContent = `채널${channel} 자극 중 (세기 ${intensity})`;
 }
 
 async function testModeKeyUp(channel) {
