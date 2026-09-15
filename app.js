@@ -166,11 +166,12 @@ let selectedAction = null;
 // 오른손(ACTUAL)에만 나간다.
 let liveMirrorActive = false;
 
-// 앱 모드 -- "mirror"(거울 모드) | "action"(행동 보조 모드, 오픈루프) |
-// "personalization"(개인화 모드, 수동 램프업) | "arm"(팔 인식 모드, 팔꿈치
-// 버전 거울 모드) | "test"(테스트 모드, 방향키로 채널 직접 테스트). 다섯 모드는
-// 동시에 활성화되지 않는다 -- setAppMode()가 모드를 바꿀 때마다 이전 모드에서
-// 돌고 있던 걸 전부 정지시킨다 (아래 설명 참고).
+// 앱 모드 -- "mirror"(거울 모드) | "action"(행동 보조 모드, 오픈루프 -- 회원
+// 개인화/개인화 측정(수동 램프업)도 이 안에 포함됨, 어차피 개인화 측정 결과가
+// 행동 보조의 채널 입력칸으로 들어가는 용도라 같이 묶었다) | "arm"(팔 인식
+// 모드, 팔꿈치 버전 거울 모드) | "test"(테스트 모드, 방향키로 채널 직접 테스트).
+// 네 모드는 동시에 활성화되지 않는다 -- setAppMode()가 모드를 바꿀 때마다
+// 이전 모드에서 돌고 있던 걸 전부 정지시킨다 (아래 설명 참고).
 let appMode = "mirror";
 
 // 테스트 모드 -- 지금 방향키(←/→)로 누르고 있는 채널(1|2) | null. 카메라·
@@ -438,13 +439,11 @@ const tableBody = document.getElementById("fingerTableBody");
 // 모드 선택 (거울 / 행동 보조 / 개인화 / 팔 인식) -- 4개
 const modeMirrorBtn = document.getElementById("modeMirrorBtn");
 const modeActionBtn = document.getElementById("modeActionBtn");
-const modePersonalizationBtn = document.getElementById("modePersonalizationBtn");
 const modeArmBtn = document.getElementById("modeArmBtn");
 const modeTestBtn = document.getElementById("modeTestBtn");
 const modeDescriptionText = document.getElementById("modeDescriptionText");
 const mirrorModeCard = document.getElementById("mirrorModeCard");
 const actionModeCard = document.getElementById("actionModeCard");
-const personalizationModeCard = document.getElementById("personalizationModeCard");
 const armModeCard = document.getElementById("armModeCard");
 const testModeCard = document.getElementById("testModeCard");
 
@@ -655,7 +654,6 @@ liveMirrorBtn.addEventListener("click", toggleLiveMirror);
 
 modeMirrorBtn.addEventListener("click", () => setAppMode("mirror"));
 modeActionBtn.addEventListener("click", () => setAppMode("action"));
-modePersonalizationBtn.addEventListener("click", () => setAppMode("personalization"));
 modeArmBtn.addEventListener("click", () => setAppMode("arm"));
 modeTestBtn.addEventListener("click", () => setAppMode("test"));
 
@@ -2022,12 +2020,10 @@ function setAppMode(mode) {
   appMode = mode;
   mirrorModeCard.style.display = mode === "mirror" ? "" : "none";
   actionModeCard.style.display = mode === "action" ? "" : "none";
-  personalizationModeCard.style.display = mode === "personalization" ? "" : "none";
   armModeCard.style.display = mode === "arm" ? "" : "none";
   testModeCard.style.display = mode === "test" ? "" : "none";
   modeMirrorBtn.classList.toggle("selected", mode === "mirror");
   modeActionBtn.classList.toggle("selected", mode === "action");
-  modePersonalizationBtn.classList.toggle("selected", mode === "personalization");
   modeArmBtn.classList.toggle("selected", mode === "arm");
   modeTestBtn.classList.toggle("selected", mode === "test");
 
@@ -2035,9 +2031,7 @@ function setAppMode(mode) {
     mode === "mirror"
       ? "<b>거울 모드</b>: 행동 버튼(카메라로 오차를 계속 보정) 또는 실시간 왼손 연동으로 오른손을 목표에 맞춥니다."
       : mode === "action"
-      ? "<b>행동 보조 모드</b>: 채널1/채널2에 직접 입력한 고정 전류를 그대로 내보냅니다 (카메라 오차 보정 없음)."
-      : mode === "personalization"
-      ? "<b>개인화 모드</b>: 선택한 채널의 전류를 서서히 올리다가 키보드 A로 정지합니다 (역치/반응 확인용)."
+      ? "<b>행동 보조 모드</b>: 채널1/채널2에 직접 입력한 고정 전류를 그대로 내보냅니다 (카메라 오차 보정 없음). 개인화 측정(수동 램프업)도 이 안에 함께 있습니다."
       : mode === "arm"
       ? "<b>팔 인식 모드</b>: 왼팔의 팔꿈치 굽힘 정도를 실시간으로 오른팔 목표로 흘려보내고, 카메라로 측정한 오른팔의 실제 굽힘에 맞춰 자극 세기를 자동 조절합니다 (팔 버전 거울 모드)."
       : "<b>테스트 모드</b>: 카메라/캘리브레이션 없이, ←(채널1)/→(채널2) 방향키를 누르고 있는 동안만 그 채널에 고정 세기로 자극을 내보냅니다. 하드웨어가 실제로 잘 연결됐는지 빠르게 확인할 때만 쓰세요.";
@@ -2054,7 +2048,7 @@ function setAppMode(mode) {
       .catch((err) => showToast("❌ 팔 인식 모델 로딩 실패: " + (err.message || err), "bad", 5000));
   }
 
-  logControl(`모드 전환: ${mode === "mirror" ? "거울 모드" : mode === "action" ? "행동 보조 모드" : mode === "personalization" ? "개인화 모드" : mode === "arm" ? "팔 인식 모드" : "테스트 모드"}`);
+  logControl(`모드 전환: ${mode === "mirror" ? "거울 모드" : mode === "action" ? "행동 보조 모드" : mode === "arm" ? "팔 인식 모드" : "테스트 모드"}`);
 }
 
 // ============================================================================
@@ -2275,6 +2269,10 @@ async function driveActionChannels(ch1Intensity, ch2Intensity) {
 async function startSequentialRamp(key, ch1RampMs, ch2RampMs) {
   const def = ACTION_MODE_DEFS[key];
 
+  // 개인화 측정이 켜진 채로 행동을 시작하면 같은 채널을 두고 서로 다른 값을
+  // 계속 덮어쓰는 충돌이 생긴다 -- 행동을 시작하기 전에 먼저 확실히 끈다.
+  if (personalizationRampActive) stopPersonalizationRamp("행동 실행으로 전환");
+
   if (runningActionKey && runningActionKey !== key) {
     stopActionMode(`"${ACTION_MODE_DEFS[runningActionKey].label}"에서 "${def.label}"로 전환`);
   } else if (runningActionKey === key) {
@@ -2383,6 +2381,8 @@ const BICEP_REST_BETWEEN_REPS_MS = 500;
 async function startBicepRoutine() {
   const key = "bicep";
   const def = ACTION_MODE_DEFS[key];
+
+  if (personalizationRampActive) stopPersonalizationRamp("행동 실행으로 전환");
 
   if (runningActionKey && runningActionKey !== key) {
     stopActionMode(`"${ACTION_MODE_DEFS[runningActionKey].label}"에서 "${def.label}"로 전환`);
@@ -2618,6 +2618,11 @@ function stopActionMode(reason) {
 
 function startPersonalizationRamp() {
   if (personalizationRampActive) return;
+
+  // 개인화 측정과 행동(수저/이두)이 이제 같은 "행동 보조 모드" 안에 같이 있어서,
+  // 서로 모르고 동시에 하드웨어를 건드리면 같은 채널을 두고 값이 계속 덮어써지는
+  // 충돌이 생긴다 -- 시작하기 전에 실행 중인 행동을 먼저 확실히 끈다.
+  if (runningActionKey) stopActionMode("개인화 측정 시작으로 전환");
 
   const allowed = liveOutputAllowedByConfig();
   if (!allowed.ok) {

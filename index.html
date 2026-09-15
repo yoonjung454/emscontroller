@@ -237,7 +237,6 @@
       <div class="btn-row">
         <button class="preset selected" id="modeMirrorBtn">🪞 거울 모드</button>
         <button class="preset" id="modeActionBtn">🎬 행동 보조 모드</button>
-        <button class="preset" id="modePersonalizationBtn">📈 개인화 모드</button>
         <button class="preset" id="modeArmBtn">🦾 팔 인식 모드</button>
         <button class="preset" id="modeTestBtn">⚡ 테스트 모드</button>
       </div>
@@ -458,6 +457,50 @@
       </div>
 
       <div class="sub-section">
+        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🎚 개인화 측정 (수동 램프업)</div>
+        <p class="hint" style="margin-top:4px;">
+          아래 수저 들기 보조 / 이두운동 채널값을 얼마로 넣어야 할지 모를 때 쓰는 측정 도구입니다.
+          시작하면 선택한 채널의 전류가 서서히 올라갑니다. 원하는 세기(예: 느껴지기 시작하는 지점,
+          참기 힘든 지점 등)에 도달하면 키보드 <b>A</b>를 눌러 즉시 정지하세요. 아래쪽 "개인화
+          캘리브레이션"(자동 스윕) 카드와는 별개의 수동 측정 방법입니다.
+        </p>
+        <div class="safety-row">
+          <label>채널 선택</label>
+          <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationChannel" id="personalizationCh1Radio" value="1" checked /> 채널1</label>
+          <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationChannel" id="personalizationCh2Radio" value="2" /> 채널2</label>
+        </div>
+        <div class="safety-row">
+          <label for="personalizationRampStepInput">증가 속도 (0.5초마다 +N)</label>
+          <input type="number" id="personalizationRampStepInput" min="1" max="20" value="2" />
+        </div>
+        <div class="btn-row" style="margin-top:8px;">
+          <button class="primary" id="personalizationRampBtn">▶ 개인화 측정 시작</button>
+        </div>
+        <div class="stim-row" style="margin-top:10px;">
+          <div>
+            <div class="hint">현재 세기</div>
+            <div class="stim-value" id="personalizationRampValue">0</div>
+          </div>
+        </div>
+        <div class="state-line">상태: <b id="personalizationRampStatusText">대기 중</b></div>
+        <p class="hint" id="personalizationRampResultText" style="margin-top:4px;">아직 측정된 값이 없습니다.</p>
+
+        <div class="sub-section">
+          <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">이 값을 저장할 곳</div>
+          <p class="hint" style="margin-top:4px;">
+            방금 잰 세기를 아래 채널 입력칸에 그대로 채워줍니다 (그 뒤 위쪽 "회원 등록"을 누르면
+            그 사람 값으로 저장됨). 위에서 고른 채널(1 또는 2) 기준으로 들어갑니다.
+          </p>
+          <div class="safety-row">
+            <label>행동 선택</label>
+            <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationTargetAction" id="personalizationTargetSpoon" value="spoonLift" checked /> 수저 들기 보조</label>
+            <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationTargetAction" id="personalizationTargetBicep" value="bicep" /> 이두운동</label>
+            <button class="primary" id="personalizationSaveBtn">💾 이 값 채널에 저장</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-section">
         <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🥄 수저 들기 보조</div>
         <p class="hint" style="margin-top:4px;">
           동시에 올라가지 않습니다 -- <b>채널1이 먼저 2초에 걸쳐</b> 여기 입력한 값까지 서서히 올라가고,
@@ -497,48 +540,6 @@
       <p class="hint" style="margin-top:4px;">실행 중인 행동 버튼을 다시 누르면 정지합니다. 다른 행동을 누르면 이전 행동은 자동으로 먼저 정지됩니다.</p>
     </div>
 
-    <div class="card" id="personalizationModeCard" style="display:none;">
-      <h2>④ 개인화 모드 <span class="badge-note">수동 램프업 -- 키보드 A로 정지</span></h2>
-      <p class="hint">
-        시작하면 선택한 채널의 전류가 서서히 올라갑니다. 원하는 세기(예: 느껴지기 시작하는 지점,
-        참기 힘든 지점 등)에 도달하면 키보드 <b>A</b>를 눌러 즉시 정지하세요. 아래 "개인화 캘리브레이션"
-        (자동 스윕)과는 별개의 수동 측정 방법입니다.
-      </p>
-      <div class="safety-row">
-        <label>채널 선택</label>
-        <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationChannel" id="personalizationCh1Radio" value="1" checked /> 채널1</label>
-        <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationChannel" id="personalizationCh2Radio" value="2" /> 채널2</label>
-      </div>
-      <div class="safety-row">
-        <label for="personalizationRampStepInput">증가 속도 (0.5초마다 +N)</label>
-        <input type="number" id="personalizationRampStepInput" min="1" max="20" value="2" />
-      </div>
-      <div class="btn-row" style="margin-top:8px;">
-        <button class="primary" id="personalizationRampBtn">▶ 개인화 모드 시작</button>
-      </div>
-      <div class="stim-row" style="margin-top:10px;">
-        <div>
-          <div class="hint">현재 세기</div>
-          <div class="stim-value" id="personalizationRampValue">0</div>
-        </div>
-      </div>
-      <div class="state-line">상태: <b id="personalizationRampStatusText">대기 중</b></div>
-      <p class="hint" id="personalizationRampResultText" style="margin-top:4px;">아직 측정된 값이 없습니다.</p>
-
-      <div class="sub-section">
-        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">이 값을 저장할 곳</div>
-        <p class="hint" style="margin-top:4px;">
-          방금 잰 세기를 ④ 행동 보조 모드의 채널 입력칸에 그대로 채워줍니다 (그 뒤 회원 등록을 누르면
-          그 사람 값으로 저장됨). 위에서 고른 채널(1 또는 2) 기준으로 들어갑니다.
-        </p>
-        <div class="safety-row">
-          <label>행동 선택</label>
-          <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationTargetAction" id="personalizationTargetSpoon" value="spoonLift" checked /> 수저 들기 보조</label>
-          <label class="checkbox-row" style="margin-top:0;"><input type="radio" name="personalizationTargetAction" id="personalizationTargetBicep" value="bicep" /> 이두운동</label>
-          <button class="primary" id="personalizationSaveBtn">💾 이 값 채널에 저장</button>
-        </div>
-      </div>
-    </div>
 
     <div class="card" id="armModeCard" style="display:none;">
       <h2>④ 팔 인식 모드 <span class="badge-note">실험적 -- 팔꿈치 굽힘 폐루프</span></h2>
