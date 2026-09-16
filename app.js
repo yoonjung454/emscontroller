@@ -1128,10 +1128,18 @@ async function ensurePoseLandmarker() {
       const filesetResolverPose = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
       );
+      // ⚠ 정확도 개선: "lite" 모델은 빠른 대신 관절 각도가 좀 부정확했다 --
+      // 팔 인식이 급하다는 요청으로 더 정확한 "full" 모델로 교체(속도는 lite
+      // 보다 느리지만 단일 인물·VIDEO 모드에서는 대부분 하드웨어에서 충분히
+      // 실시간으로 돌아간다). minPoseDetectionConfidence 등도 손 인식(0.7)과
+      // 맞춰서 약한 신뢰도의 흔들리는 관절을 덜 받아들이게 했다.
       poseLandmarker = await PoseLandmarker.createFromOptions(filesetResolverPose, {
-        baseOptions: { modelAssetPath: "./pose_landmarker_lite.task" },
+        baseOptions: { modelAssetPath: "./pose_landmarker_full.task" },
         runningMode: "VIDEO",
-        numPoses: 1
+        numPoses: 1,
+        minPoseDetectionConfidence: 0.7,
+        minPosePresenceConfidence: 0.7,
+        minTrackingConfidence: 0.7
       });
       return poseLandmarker;
     })().catch((err) => {
@@ -1161,7 +1169,14 @@ async function startRun() {
     }
     if (appMode !== "mirror") await ensurePoseLandmarker().catch(() => {}); // 실패해도 카메라 자체는 켜지게 (아래 renderLoop가 poseLandmarker null이면 알아서 건너뜀)
 
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+    // ⚠ 정확도 개선: 640x480은 손엔 충분했지만 팔(어깨~손목 전체)까지 잡으려면
+    // 화면에서 관절 하나하나가 차지하는 픽셀 수가 너무 적어서 각도 오차가 컸다.
+    // 1280x720(HD)로 올려서 더 선명하게 잡히게 함 -- "ideal"이라 이 해상도를
+    // 지원 안 하는 웹캠이면 가능한 가장 가까운 해상도로 자동으로 낮아진다.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
     video.srcObject = stream;
     await video.play();
     canvas.width = video.videoWidth || 640;
