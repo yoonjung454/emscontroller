@@ -492,24 +492,6 @@
       </div>
 
       <div class="sub-section">
-        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🥄 수저 들기 보조 <span class="badge-note">목표 % 자동 세팅</span></div>
-        <p class="hint" style="margin-top:4px;">
-          전류값을 직접 입력하지 않습니다 -- <b>손을 몇 % 굽혀서 쥘지</b>, <b>팔꿈치를 몇 % 굽혀서
-          들지</b>만 정하면, 카메라로 실시간 측정하면서 <b>그 사람에게 맞는 세기를 자동으로 찾아
-          도달·유지</b>합니다 (팔 인식 모드와 같은 원리 -- 채널1=손, 채널2=팔꿈치). 시작 전에
-          <b>② 초기값 측정(손)</b>과 <b>팔 초기값 측정</b>을 먼저 한 번씩 해두세요.
-        </p>
-        <div class="safety-row">
-          <label for="spoonLiftHandTargetInput">손 목표 %</label>
-          <input type="number" id="spoonLiftHandTargetInput" min="0" max="100" value="70" />
-          <label for="spoonLiftElbowTargetInput">팔꿈치 목표 %</label>
-          <input type="number" id="spoonLiftElbowTargetInput" min="0" max="100" value="50" />
-          <button class="primary" id="spoonLiftSaveBtn">저장</button>
-        </div>
-        <p class="hint" id="spoonLiftSeedText" style="margin-top:8px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
-      </div>
-
-      <div class="sub-section">
         <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">💪 이두운동 <span class="badge-note">목표 % 자동 세팅</span></div>
         <p class="hint" style="margin-top:4px;">
           <b>손 목표 %</b>로 먼저 쥔 채 유지하고, 그 상태에서 <b>팔꿈치가 "굽힘 목표 %"까지 올라가서
@@ -533,9 +515,27 @@
       </div>
 
       <div class="sub-section">
+        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🥄 수저 들기 보조 <span class="badge-note">목표 % 자동 세팅</span></div>
+        <p class="hint" style="margin-top:4px;">
+          전류값을 직접 입력하지 않습니다 -- <b>손을 몇 % 굽혀서 쥘지</b>, <b>팔꿈치를 몇 % 굽혀서
+          들지</b>만 정하면, 카메라로 실시간 측정하면서 <b>그 사람에게 맞는 세기를 자동으로 찾아
+          도달·유지</b>합니다 (팔 인식 모드와 같은 원리 -- 채널1=손, 채널2=팔꿈치). 시작 전에
+          <b>② 초기값 측정(손)</b>과 <b>팔 초기값 측정</b>을 먼저 한 번씩 해두세요.
+        </p>
+        <div class="safety-row">
+          <label for="spoonLiftHandTargetInput">손 목표 %</label>
+          <input type="number" id="spoonLiftHandTargetInput" min="0" max="100" value="70" />
+          <label for="spoonLiftElbowTargetInput">팔꿈치 목표 %</label>
+          <input type="number" id="spoonLiftElbowTargetInput" min="0" max="100" value="50" />
+          <button class="primary" id="spoonLiftSaveBtn">저장</button>
+        </div>
+        <p class="hint" id="spoonLiftSeedText" style="margin-top:8px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
+      </div>
+
+      <div class="sub-section">
         <div class="btn-row">
-          <button class="primary" id="spoonLiftBtn">▶ 수저 들기 보조 실행</button>
           <button class="primary" id="bicepBtn">▶ 이두운동 실행</button>
+          <button class="primary" id="spoonLiftBtn">▶ 수저 들기 보조 실행</button>
         </div>
 
         <div class="compare-grid" style="margin-top:10px;">
