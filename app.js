@@ -512,33 +512,26 @@ const testModeStatusText = document.getElementById("testModeStatusText");
 const spoonLiftHandTargetInput = document.getElementById("spoonLiftHandTargetInput");
 const spoonLiftElbowTargetInput = document.getElementById("spoonLiftElbowTargetInput");
 const spoonLiftBtn = document.getElementById("spoonLiftBtn");
-const spoonLiftHandStateText = document.getElementById("spoonLiftHandStateText");
-const spoonLiftElbowStateText = document.getElementById("spoonLiftElbowStateText");
-// 발표용으로 팔인식 모드처럼 큰 TARGET/ACTUAL/오차/세기 칸을 수저 들기 보조에도 추가
-const spoonLiftHandTargetDisplay = document.getElementById("spoonLiftHandTargetDisplay");
-const spoonLiftHandActualDisplay = document.getElementById("spoonLiftHandActualDisplay");
-const spoonLiftHandErrorDisplay = document.getElementById("spoonLiftHandErrorDisplay");
-const spoonLiftHandIntensityDisplay = document.getElementById("spoonLiftHandIntensityDisplay");
-const spoonLiftElbowTargetDisplay = document.getElementById("spoonLiftElbowTargetDisplay");
-const spoonLiftElbowActualDisplay = document.getElementById("spoonLiftElbowActualDisplay");
-const spoonLiftElbowErrorDisplay = document.getElementById("spoonLiftElbowErrorDisplay");
-const spoonLiftElbowIntensityDisplay = document.getElementById("spoonLiftElbowIntensityDisplay");
 const bicepHandTargetInput = document.getElementById("bicepHandTargetInput");
 const bicepElbowCurlTargetInput = document.getElementById("bicepElbowCurlTargetInput");
 const bicepElbowReleaseTargetInput = document.getElementById("bicepElbowReleaseTargetInput");
 const bicepRepsInput = document.getElementById("bicepRepsInput");
 const bicepBtn = document.getElementById("bicepBtn");
-const bicepHandStateText = document.getElementById("bicepHandStateText");
-const bicepElbowStateText = document.getElementById("bicepElbowStateText");
-// 이두운동도 같은 이유로 동일하게 추가
-const bicepHandTargetDisplay = document.getElementById("bicepHandTargetDisplay");
-const bicepHandActualDisplay = document.getElementById("bicepHandActualDisplay");
-const bicepHandErrorDisplay = document.getElementById("bicepHandErrorDisplay");
-const bicepHandIntensityDisplay = document.getElementById("bicepHandIntensityDisplay");
-const bicepElbowTargetDisplay = document.getElementById("bicepElbowTargetDisplay");
-const bicepElbowActualDisplay = document.getElementById("bicepElbowActualDisplay");
-const bicepElbowErrorDisplay = document.getElementById("bicepElbowErrorDisplay");
-const bicepElbowIntensityDisplay = document.getElementById("bicepElbowIntensityDisplay");
+// 수저 들기 보조/이두운동이 동시에 돌 수 없어서(runningActionKey 하나뿐),
+// 예전엔 각자 따로 TARGET/ACTUAL/오차/세기 칸을 4벌 갖고 있었는데 화면에
+// 항상 4개가 같이 보여서 헷갈렸다 -- "손"/"팔꿈치" 딱 2벌만 공용으로 두고
+// 지금 실행 중인 쪽(spoonLiftTick 또는 bicepClosedLoopTick)이 그때그때
+// 채워쓰도록 통합.
+const actionHandTargetDisplay = document.getElementById("actionHandTargetDisplay");
+const actionHandActualDisplay = document.getElementById("actionHandActualDisplay");
+const actionHandErrorDisplay = document.getElementById("actionHandErrorDisplay");
+const actionHandIntensityDisplay = document.getElementById("actionHandIntensityDisplay");
+const actionHandStateText = document.getElementById("actionHandStateText");
+const actionElbowTargetDisplay = document.getElementById("actionElbowTargetDisplay");
+const actionElbowActualDisplay = document.getElementById("actionElbowActualDisplay");
+const actionElbowErrorDisplay = document.getElementById("actionElbowErrorDisplay");
+const actionElbowIntensityDisplay = document.getElementById("actionElbowIntensityDisplay");
+const actionElbowStateText = document.getElementById("actionElbowStateText");
 const actionModeStatusText = document.getElementById("actionModeStatusText");
 
 // 회원 개인화 (행동 보조 모드)
@@ -2596,16 +2589,16 @@ function spoonLiftTick(state) {
   // phase는 "hand" -> "elbow"만 거친다 -- 팔꿈치까지 LOCKED되면 위에서 바로
   // stopActionMode()로 완료 처리하고 return하므로 "done" 단계는 따로 없다.
   const phaseLabel = state.phase === "hand" ? "① 손 그립 중" : "② 팔꿈치 들어올리는 중";
-  spoonLiftHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
-  spoonLiftElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
+  actionHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
+  actionElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
   actionModeStatusText.textContent =
     `수저 들기 보조: ${phaseLabel} -- 손 ${Math.round(handAverage ?? 0)}%/${state.handTarget}% · 팔꿈치 ${Math.round(armLatestPercent.actual ?? 0)}%/${state.elbowTarget}%`;
 
   // 발표용 큰 TARGET/ACTUAL/오차/세기 칸(팔 인식 모드와 같은 스타일)
-  updateCompareBoxes(spoonLiftHandTargetDisplay, spoonLiftHandActualDisplay, spoonLiftHandErrorDisplay, state.handTarget, handAverage);
-  spoonLiftHandIntensityDisplay.textContent = Math.round(actionHandCtrl.intensity);
-  updateCompareBoxes(spoonLiftElbowTargetDisplay, spoonLiftElbowActualDisplay, spoonLiftElbowErrorDisplay, state.elbowTarget, armLatestPercent.actual);
-  spoonLiftElbowIntensityDisplay.textContent = Math.round(actionElbowCtrl.intensity);
+  updateCompareBoxes(actionHandTargetDisplay, actionHandActualDisplay, actionHandErrorDisplay, state.handTarget, handAverage);
+  actionHandIntensityDisplay.textContent = Math.round(actionHandCtrl.intensity);
+  updateCompareBoxes(actionElbowTargetDisplay, actionElbowActualDisplay, actionElbowErrorDisplay, state.elbowTarget, armLatestPercent.actual);
+  actionElbowIntensityDisplay.textContent = Math.round(actionElbowCtrl.intensity);
 
   driveArmHardwareIfNeeded(actionHandCtrl.intensity, actionElbowCtrl.intensity)
     .catch((err) => logControl("행동 보조 모드 전송 오류: " + err.message));
@@ -2679,12 +2672,12 @@ function bicepClosedLoopTick(state) {
     actionHandCtrl.state = "WAITING_FOR_HAND";
     actionElbowCtrl.state = "WAITING_FOR_HAND";
     actionModeStatusText.textContent = "이두운동: 손/팔 인식 대기 중";
-    bicepHandStateText.textContent = STATE_LABELS.WAITING_FOR_HAND;
-    bicepElbowStateText.textContent = STATE_LABELS.WAITING_FOR_HAND;
-    updateCompareBoxes(bicepHandTargetDisplay, bicepHandActualDisplay, bicepHandErrorDisplay, state.handTarget, null);
-    bicepHandIntensityDisplay.textContent = Math.round(actionHandCtrl.intensity);
-    updateCompareBoxes(bicepElbowTargetDisplay, bicepElbowActualDisplay, bicepElbowErrorDisplay, null, null);
-    bicepElbowIntensityDisplay.textContent = Math.round(actionElbowCtrl.intensity);
+    actionHandStateText.textContent = STATE_LABELS.WAITING_FOR_HAND;
+    actionElbowStateText.textContent = STATE_LABELS.WAITING_FOR_HAND;
+    updateCompareBoxes(actionHandTargetDisplay, actionHandActualDisplay, actionHandErrorDisplay, state.handTarget, null);
+    actionHandIntensityDisplay.textContent = Math.round(actionHandCtrl.intensity);
+    updateCompareBoxes(actionElbowTargetDisplay, actionElbowActualDisplay, actionElbowErrorDisplay, null, null);
+    actionElbowIntensityDisplay.textContent = Math.round(actionElbowCtrl.intensity);
     driveArmHardwareIfNeeded(actionHandCtrl.intensity, actionElbowCtrl.intensity).catch(() => {});
     return;
   }
@@ -2732,15 +2725,15 @@ function bicepClosedLoopTick(state) {
     }
   }
 
-  bicepHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
-  bicepElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
+  actionHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
+  actionElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
   actionModeStatusText.textContent = `이두운동: ${phaseLabel}`;
 
   // 발표용 큰 TARGET/ACTUAL/오차/세기 칸(팔 인식 모드와 같은 스타일)
-  updateCompareBoxes(bicepHandTargetDisplay, bicepHandActualDisplay, bicepHandErrorDisplay, state.handTarget, handAverage);
-  bicepHandIntensityDisplay.textContent = Math.round(actionHandCtrl.intensity);
-  updateCompareBoxes(bicepElbowTargetDisplay, bicepElbowActualDisplay, bicepElbowErrorDisplay, elbowTargetNow, armLatestPercent.actual);
-  bicepElbowIntensityDisplay.textContent = Math.round(actionElbowCtrl.intensity);
+  updateCompareBoxes(actionHandTargetDisplay, actionHandActualDisplay, actionHandErrorDisplay, state.handTarget, handAverage);
+  actionHandIntensityDisplay.textContent = Math.round(actionHandCtrl.intensity);
+  updateCompareBoxes(actionElbowTargetDisplay, actionElbowActualDisplay, actionElbowErrorDisplay, elbowTargetNow, armLatestPercent.actual);
+  actionElbowIntensityDisplay.textContent = Math.round(actionElbowCtrl.intensity);
 
   driveArmHardwareIfNeeded(actionHandCtrl.intensity, actionElbowCtrl.intensity)
     .catch((err) => logControl("이두운동 전송 오류: " + err.message));
