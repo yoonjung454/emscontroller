@@ -500,8 +500,58 @@
           <input type="number" id="spoonLiftElbowTargetInput" min="0" max="100" value="50" />
           <button class="primary" id="spoonLiftBtn">▶ 수저 들기 보조 실행</button>
         </div>
-        <div class="state-line" style="margin-top:6px;">손: <b id="spoonLiftHandStateText">-</b> · 팔꿈치: <b id="spoonLiftElbowStateText">-</b></div>
-        <p class="hint" id="spoonLiftSeedText" style="margin-top:4px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
+
+        <div class="compare-grid" style="margin-top:10px;">
+          <div class="compare-box">
+            <div class="compare-label">손 TARGET</div>
+            <div class="compare-value" id="spoonLiftHandTargetDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">손 ACTUAL</div>
+            <div class="compare-value" id="spoonLiftHandActualDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">오차</div>
+            <div class="compare-value" id="spoonLiftHandErrorDisplay">-</div>
+          </div>
+        </div>
+        <div class="stim-row" style="margin-top:6px;">
+          <div>
+            <div class="hint">채널1 EMS 세기 (손)</div>
+            <div class="stim-value" id="spoonLiftHandIntensityDisplay">0</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="hint">손 상태</div>
+            <div class="state-line" style="font-size:20px;"><b id="spoonLiftHandStateText">-</b></div>
+          </div>
+        </div>
+
+        <div class="compare-grid" style="margin-top:14px;">
+          <div class="compare-box">
+            <div class="compare-label">팔꿈치 TARGET</div>
+            <div class="compare-value" id="spoonLiftElbowTargetDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">팔꿈치 ACTUAL</div>
+            <div class="compare-value" id="spoonLiftElbowActualDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">오차</div>
+            <div class="compare-value" id="spoonLiftElbowErrorDisplay">-</div>
+          </div>
+        </div>
+        <div class="stim-row" style="margin-top:6px;">
+          <div>
+            <div class="hint">채널2 EMS 세기 (팔꿈치)</div>
+            <div class="stim-value" id="spoonLiftElbowIntensityDisplay">0</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="hint">팔꿈치 상태</div>
+            <div class="state-line" style="font-size:20px;"><b id="spoonLiftElbowStateText">-</b></div>
+          </div>
+        </div>
+
+        <p class="hint" id="spoonLiftSeedText" style="margin-top:8px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
       </div>
 
       <div class="sub-section">
@@ -524,8 +574,58 @@
           <input type="number" id="bicepRepsInput" min="1" max="100" value="5" />
           <button class="primary" id="bicepBtn">▶ 이두운동 실행</button>
         </div>
-        <div class="state-line" style="margin-top:6px;">손: <b id="bicepHandStateText">-</b> · 팔꿈치: <b id="bicepElbowStateText">-</b></div>
-        <p class="hint" id="bicepSeedText" style="margin-top:4px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
+
+        <div class="compare-grid" style="margin-top:10px;">
+          <div class="compare-box">
+            <div class="compare-label">손 TARGET</div>
+            <div class="compare-value" id="bicepHandTargetDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">손 ACTUAL</div>
+            <div class="compare-value" id="bicepHandActualDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">오차</div>
+            <div class="compare-value" id="bicepHandErrorDisplay">-</div>
+          </div>
+        </div>
+        <div class="stim-row" style="margin-top:6px;">
+          <div>
+            <div class="hint">채널1 EMS 세기 (손)</div>
+            <div class="stim-value" id="bicepHandIntensityDisplay">0</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="hint">손 상태</div>
+            <div class="state-line" style="font-size:20px;"><b id="bicepHandStateText">-</b></div>
+          </div>
+        </div>
+
+        <div class="compare-grid" style="margin-top:14px;">
+          <div class="compare-box">
+            <div class="compare-label">팔꿈치 TARGET (지금 단계)</div>
+            <div class="compare-value" id="bicepElbowTargetDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">팔꿈치 ACTUAL</div>
+            <div class="compare-value" id="bicepElbowActualDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">오차</div>
+            <div class="compare-value" id="bicepElbowErrorDisplay">-</div>
+          </div>
+        </div>
+        <div class="stim-row" style="margin-top:6px;">
+          <div>
+            <div class="hint">채널2 EMS 세기 (팔꿈치)</div>
+            <div class="stim-value" id="bicepElbowIntensityDisplay">0</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="hint">팔꿈치 상태</div>
+            <div class="state-line" style="font-size:20px;"><b id="bicepElbowStateText">-</b></div>
+          </div>
+        </div>
+
+        <p class="hint" id="bicepSeedText" style="margin-top:8px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
       </div>
 
       <div class="state-line" style="margin-top:10px;">상태: <b id="actionModeStatusText">대기 중</b></div>
