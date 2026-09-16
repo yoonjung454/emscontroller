@@ -448,19 +448,29 @@
 
       <div class="sub-section" style="margin-top:12px; padding-top:12px;">
         <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text); justify-content:space-between;">
-          <span>설정 저장</span>
+          <span>🎤 음성 비서 (탱글이)</span>
           <span>
-            <button id="voiceCommandBtn">🎤 음성 명령</button>
+            <button id="voiceCommandBtn">🎤 마이크 켜기</button>
           </span>
         </div>
+        <p class="hint" style="margin-top:4px;">
+          버튼을 누르면 계속 듣고 있는 상태가 됩니다(한 번 말할 때마다 다시 누를 필요 없음).
+          <b>"탱글아"</b> 또는 <b>"탱그라"</b>라고 부르면 "네"라고 대답합니다. 그 다음
+          <b>"수저들기 보조해줘"</b>, <b>"나 밥먹고 싶어"</b>, <b>"나 밥먹는 거 도와줘"</b> 등을
+          말하면 지금 어떤 모드에 있든 <b>행동 보조 모드로 바뀌면서 수저 들기 보조가 바로
+          실행</b>됩니다. <b>"이두운동해줘"</b>라고 말하면 몇 회 할지 되물어보고, "3회"처럼
+          숫자로 대답하면 그 횟수로 설정해서 바로 실행합니다. 안전 조건(연결/안전값/초기값 측정
+          등)은 버튼으로 누를 때와 동일하게 확인합니다.
+        </p>
+        <p class="hint" id="voiceCommandStatusText" style="margin-top:4px;">마이크가 꺼져 있습니다.</p>
+      </div>
+
+      <div class="sub-section">
+        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">설정 저장</div>
         <p class="hint" style="margin-top:4px;">
           아래 수저 들기 보조/이두운동 목표 %(/반복 횟수)는 각 섹션의 "저장" 버튼을 누르면 이
           브라우저에 그대로 남아있다가, 다음에 페이지를 열어도 자동으로 다시 채워집니다(회원별로
           따로 저장하지 않고, 이 컴퓨터에서 마지막으로 저장한 값 하나만 기억합니다).
-        </p>
-        <p class="hint" id="voiceCommandStatusText" style="margin-top:4px;">
-          🎤 음성 명령: "수저들기보조" 또는 "이두운동"이라고 말하면 해당 행동을 바로 시작합니다
-          (지금 입력칸에 있는 목표 % 그대로 사용). 그 외 안전 조건(연결/안전값 등)은 버튼으로 누를 때와 동일합니다.
         </p>
       </div>
 

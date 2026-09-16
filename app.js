@@ -10,7 +10,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // 정의부에 두면 TDZ로 인해 "Cannot access before initialization" 오류가 난다).
 const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
 let voiceRecognition = null;
-let voiceListening = false;
 
 // ============================================================================
 // Supabase (참가자별 캘리브레이션/개인화 프로필 클라우드 저장)
@@ -2260,8 +2259,17 @@ function saveActionInputs(key, btn) {
 }
 
 // ============================================================================
-// 음성 명령 (마이크 -- "수저들기보조" / "이두운동" 딱 두 단어만 인식)
-// ============================================================================
+// 음성 비서 "탱글이" -- 마이크 버튼을 한 번 누르면 계속 듣고 있는 상태가
+// 되고(매번 다시 누를 필요 없음), "탱글아"/"탱그라"라고 부르면 "네"라고
+// 대답한다. 그 다음(또는 같은 문장 안에서 바로) 아래 명령 문구가 들리면
+// 지금 앱이 어떤 모드에 있든 행동 보조 모드로 바꾸고 해당 동작을 실행한다.
+//
+// ⚠ 안전 설계: 이름을 부르지 않은 채 흘러가는 대화(예: 옆에서 그냥 "나 밥
+// 먹었어"라고 한 말)에는 반응하지 않는다 -- "탱글아/탱그라"를 부른 뒤
+// VOICE_AWAKE_WINDOW_MS(10초) 동안만 명령을 받아들인다("이름 불러야 반응"이
+// 라는 흔한 음성비서 방식과 동일). 실제 사람 몸에 전기자극을 내보내는
+// 기능이라, 아무 말에나 반응하면 안전하지 않다고 판단했다.
+//
 // 브라우저 내장 Web Speech API만 쓴다 (SpeechRecognition으로 듣고,
 // SpeechSynthesis로 대답). 별도 서버/키 없음 -- Chrome/Edge 계열만 지원 (Web
 // Serial 요구사항이랑 동일한 브라우저라 이미 맞음).
@@ -2269,6 +2277,10 @@ function saveActionInputs(key, btn) {
 // 파일 맨 위쪽 상수 선언부로 옮겨뒀다 -- 여기 남겨두면 TDZ로 인해
 // "Cannot access before initialization" 오류가 난다.)
 
+const VOICE_AWAKE_WINDOW_MS = 10000;
+let voiceEnabled = false;          // 마이크 버튼으로 켠 상태 -- 켜져 있으면 onend에서 계속 재시작해서 "항상 듣는 중"이 됨
+let voiceAwakeUntil = 0;           // performance.now() 기준, 이 시각까지는 이름을 부른 것으로 치고 명령을 받아들임
+let voicePendingBicepReps = false; // "이두운동해줘" 듣고 몇 회인지 되묻는 중인지
 
 function speak(text) {
   try {
@@ -2289,62 +2301,140 @@ function initVoiceCommand() {
   }
   voiceRecognition = new SpeechRecognitionCtor();
   voiceRecognition.lang = "ko-KR";
-  voiceRecognition.continuous = false;
+  voiceRecognition.continuous = true; // "항상 켜진" 느낌을 위해 -- 한 번 start()하면 여러 문장을 계속 듣는다
   voiceRecognition.interimResults = false;
   voiceRecognition.maxAlternatives = 1;
 
-  voiceRecognition.onstart = () => {
-    voiceListening = true;
-    voiceCommandBtn.textContent = "🎤 듣는 중...";
-    voiceCommandBtn.classList.add("running");
-    voiceCommandStatusText.textContent = "🎤 듣고 있습니다 -- \"수저들기보조\" 또는 \"이두운동\"이라고 말해주세요.";
-  };
-
   voiceRecognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript.trim();
-    logControl(`🎤 음성 인식 결과: "${transcript}"`);
-    handleVoiceCommand(transcript);
+    // continuous 모드에서는 event.results에 이전 것들이 계속 쌓일 수 있어서,
+    // 이번에 새로 들어온 마지막 결과만 본다.
+    const transcript = event.results[event.results.length - 1][0].transcript.trim();
+    if (!transcript) return;
+    logControl(`🎤 음성 인식: "${transcript}"`);
+    handleVoiceTranscript(transcript);
   };
 
   voiceRecognition.onerror = (event) => {
-    voiceCommandStatusText.textContent = `⚠ 음성 인식 오류: ${event.error}`;
-    showToast(`⚠ 음성 인식 오류: ${event.error}`, "warn");
+    // "no-speech"/"aborted" 등은 계속 듣는 중에 흔히 발생하는 정상적인
+    // 상황이라 무시하고 onend에서 알아서 재시작된다. 마이크 권한 문제만
+    // 실제로 멈춘다(재시작해봤자 계속 같은 오류만 나므로).
+    if (event.error === "not-allowed" || event.error === "audio-capture" || event.error === "service-not-allowed") {
+      voiceEnabled = false;
+      voiceCommandBtn.textContent = "🎤 마이크 켜기";
+      voiceCommandBtn.classList.remove("running");
+      voiceCommandStatusText.textContent = `⚠ 마이크 오류(${event.error}) -- 브라우저의 마이크 권한을 확인해주세요.`;
+      showToast(`⚠ 마이크 오류: ${event.error}`, "warn");
+    }
   };
 
   voiceRecognition.onend = () => {
-    voiceListening = false;
-    voiceCommandBtn.textContent = "🎤 음성 명령";
-    voiceCommandBtn.classList.remove("running");
+    // 브라우저가 일정 시간 뒤 세션을 자체적으로 끊는 경우가 있어서, 사용자가
+    // 마이크를 끄지 않았으면(voiceEnabled) 바로 다시 시작해서 "항상 듣는 중"을 유지한다.
+    if (voiceEnabled) {
+      try { voiceRecognition.start(); } catch (e) { /* 이미 시작된 상태 등 방어 */ }
+    }
   };
 }
 
-function handleVoiceCommand(transcript) {
-  const text = transcript.replace(/\s+/g, ""); // "수저 들기 보조"처럼 띄어써도 인식되게 공백 제거하고 비교
-  if (text.includes("수저") || text.includes("숟가락")) {
-    voiceCommandStatusText.textContent = `✅ 인식됨: "수저 들기 보조" → 시작합니다`;
-    speak("수저 들기 보조를 시작합니다");
-    startSpoonLiftClosedLoop();
-  } else if (text.includes("이두")) {
-    voiceCommandStatusText.textContent = `✅ 인식됨: "이두운동" → 시작합니다`;
-    speak("이두운동을 시작합니다");
-    startBicepClosedLoop();
-  } else {
-    voiceCommandStatusText.textContent = `❓ "${transcript}" -- "수저들기보조" 또는 "이두운동"만 인식합니다.`;
-    speak("명령을 이해하지 못했습니다");
-    showToast(`❓ 음성 명령을 이해하지 못했습니다: "${transcript}"`, "warn");
+function isWakeWord(text) {
+  return text.includes("탱글") || text.includes("탱그라");
+}
+
+// 숫자 표현 인식 -- Web Speech API가 보통 "3회"/"세 번" 같은 걸 숫자로 바로
+// 옮겨주지만(예: "3회"), 혹시 한글로 그대로 나오는 경우("세 번")를 대비해
+// 1~10 한글 표현도 같이 봐준다.
+const KOR_NUMBER_WORDS = {
+  한: 1, 하나: 1, 일: 1, 두: 2, 둘: 2, 이: 2, 세: 3, 셋: 3, 삼: 3, 네: 4, 넷: 4, 사: 4,
+  다섯: 5, 오: 5, 여섯: 6, 육: 6, 일곱: 7, 칠: 7, 여덟: 8, 팔: 8, 아홉: 9, 구: 9, 열: 10, 십: 10
+};
+function parseSpokenNumber(text) {
+  const digitMatch = text.match(/\d+/);
+  if (digitMatch) return Math.max(1, Math.min(100, parseInt(digitMatch[0], 10)));
+  for (const [word, n] of Object.entries(KOR_NUMBER_WORDS)) {
+    if (text.includes(word)) return n;
   }
+  return null;
+}
+
+function matchesSpoonLiftPhrase(text) {
+  return ["수저", "숟가락", "밥먹고싶", "밥먹는거", "밥먹여줘"].some((kw) => text.includes(kw));
+}
+
+async function startSpoonLiftFromVoice() {
+  voiceCommandStatusText.textContent = "✅ \"수저 들기 보조\" 인식 -- 시작합니다";
+  speak("수저 들기 보조를 시작합니다");
+  if (appMode !== "action") setAppMode("action");
+  await startSpoonLiftClosedLoop();
+}
+
+async function startBicepFromVoice(reps) {
+  const clamped = Math.max(1, Math.min(100, reps));
+  bicepRepsInput.value = clamped;
+  voiceCommandStatusText.textContent = `✅ "이두운동 ${clamped}회" 인식 -- 시작합니다`;
+  speak(`이두운동 ${clamped}회를 시작합니다`);
+  if (appMode !== "action") setAppMode("action");
+  await startBicepClosedLoop();
+}
+
+function handleVoiceTranscript(transcript) {
+  const text = transcript.replace(/\s+/g, ""); // 띄어써도 인식되게 공백 제거하고 비교
+  const now = performance.now();
+  const heardWake = isWakeWord(text);
+  if (heardWake) voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS;
+  const awake = now < voiceAwakeUntil;
+
+  // ---- 이두운동 반복 횟수를 되묻은 직후라면, 이번 발화는 그 대답으로 취급 ----
+  if (voicePendingBicepReps) {
+    if (!awake) { voicePendingBicepReps = false; return; } // 너무 오래 걸림 -- 처음부터(이름부터) 다시
+    const reps = parseSpokenNumber(text);
+    if (reps === null) {
+      voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS; // 계속 들을 시간을 연장
+      speak("몇 회인지 다시 말씀해주세요");
+      voiceCommandStatusText.textContent = `❓ "${transcript}"에서 횟수를 못 찾았습니다 -- 숫자로 다시 말씀해주세요.`;
+      return;
+    }
+    voicePendingBicepReps = false;
+    startBicepFromVoice(reps);
+    return;
+  }
+
+  if (!awake) return; // 이름도 안 불렀고, 부른 지 오래 지남 -- 그냥 지나가는 대화로 보고 무시
+
+  if (matchesSpoonLiftPhrase(text)) {
+    startSpoonLiftFromVoice();
+    return;
+  }
+  if (text.includes("이두")) {
+    voicePendingBicepReps = true;
+    voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS;
+    speak("몇 회 하시겠어요?");
+    voiceCommandStatusText.textContent = "🎤 이두운동 -- 몇 회 할지 말씀해주세요 (예: \"3회\")";
+    return;
+  }
+  if (heardWake) {
+    // 이름만 부르고 아직 다른 명령은 없었음 -- 인사만 하고 다음 말을 기다림
+    speak("네");
+    voiceCommandStatusText.textContent = "✅ 네! 명령을 말씀해주세요 (예: \"수저들기 보조해줘\", \"이두운동해줘\")";
+    return;
+  }
+  voiceCommandStatusText.textContent = `❓ "${transcript}" -- 이해하지 못했습니다.`;
 }
 
 function toggleVoiceCommand() {
   if (!voiceRecognition) return;
-  if (voiceListening) {
-    voiceRecognition.stop();
+  voiceEnabled = !voiceEnabled;
+  if (voiceEnabled) {
+    voiceCommandBtn.textContent = "⏹ 마이크 끄기";
+    voiceCommandBtn.classList.add("running");
+    voiceCommandStatusText.textContent = "🎤 듣고 있습니다 -- \"탱글아\" 또는 \"탱그라\"라고 불러주세요.";
+    try { voiceRecognition.start(); } catch (e) { /* 이미 시작된 상태 등 방어 */ }
   } else {
-    try {
-      voiceRecognition.start();
-    } catch (e) {
-      // 이미 듣고 있는 상태에서 다시 start()를 부르면 예외가 나는 브라우저가 있어서 방어
-    }
+    voiceCommandBtn.textContent = "🎤 마이크 켜기";
+    voiceCommandBtn.classList.remove("running");
+    voiceCommandStatusText.textContent = "마이크가 꺼져 있습니다.";
+    voiceAwakeUntil = 0;
+    voicePendingBicepReps = false;
+    try { voiceRecognition.stop(); } catch (e) { /* 이미 멈춘 상태 등 방어 */ }
   }
 }
 
