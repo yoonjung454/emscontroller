@@ -770,9 +770,16 @@
 
     <div class="card">
       <h2>데이터 기록</h2>
-      <p class="hint">기록된 tick: <span id="logCountText">0</span>개</p>
-      <div class="btn-row">
-        <button id="downloadCsvBtn">CSV 다운로드</button>
+      <p class="hint">
+        목표에 도달할 때마다(LOCKED) 1회 성공으로 세고, <b>12초 안에 도달 못하면 실패</b>로 세서
+        다음 시도를 다시 잽니다 -- CSV에는 시행 번호/성공·실패/도달 시간이 한 줄씩 나옵니다.
+      </p>
+      <p class="hint" style="margin-top:6px;">
+        도달 시도: <b id="trialCountText">0</b>회 (성공 <b id="trialSuccessCountText">0</b>회) ·
+        원본 tick 기록: <span id="logCountText">0</span>개
+      </p>
+      <div class="btn-row" style="margin-top:6px;">
+        <button id="downloadCsvBtn">CSV 다운로드 (시행별 결과)</button>
         <button class="reset" id="clearLogBtn">기록 초기화</button>
       </div>
     </div>

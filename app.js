@@ -447,6 +447,15 @@ let serialLink = null;
 // 로깅
 let logRows = []; // { t, target, current, intensity, error, state, success, handDetected }
 
+// ---- 도달 시행(trial) 기록 -- 거울 모드/팔 인식 모드가 공유하는 controlState를
+// 보고 "목표에 도달했다"(LOCKED)를 한 번씩 셀 때마다 기록한다. 12초 안에
+// 도달 못하면 그 시도는 실패로 기록하고 바로 다음 시도를 재는 걸 시작한다 --
+// CSV로 내려받으면 "시행 번호/성공·실패/도달 시간"이 바로 나와서, 매 tick
+// 원본 로그(logRows)보다 사람이 보기 훨씬 편하다.
+const TRIAL_TIMEOUT_MS = 12000;
+let trialAttemptStart = null; // 지금 시도를 재기 시작한 시각 (performance.now()) -- null이면 관찰 안 하는 중
+let trialLog = []; // { n, result: "성공"|"실패", seconds: number|null, target, actual, time }
+
 // 실제 AI(Claude) 명령 해석 -- 꺼져있거나 키가 없거나 호출이 실패하면
 // 항상 규칙 기반 interpretCommand()로 대체된다 (아래 submitCommand 참고).
 let aiConfig = loadAiConfig();
@@ -619,6 +628,8 @@ const graphPercentCtx = graphPercentCanvas.getContext("2d");
 const graphIntensityCtx = graphIntensityCanvas.getContext("2d");
 
 const logCountText = document.getElementById("logCountText");
+const trialCountText = document.getElementById("trialCountText");
+const trialSuccessCountText = document.getElementById("trialSuccessCountText");
 const downloadCsvBtn = document.getElementById("downloadCsvBtn");
 const clearLogBtn = document.getElementById("clearLogBtn");
 const estopBtn = document.getElementById("estopBtn");
@@ -837,6 +848,9 @@ downloadCsvBtn.addEventListener("click", downloadCsv);
 clearLogBtn.addEventListener("click", () => {
   logRows = [];
   updateLogCount();
+  trialLog = [];
+  trialAttemptStart = null;
+  updateTrialCountUI();
 });
 
 estopBtn.addEventListener("click", () => triggerEmergencyStop("사용자 비상정지 버튼"));
@@ -1519,6 +1533,7 @@ function processResult(result, poseResult) {
   });
   if (logRows.length > 5000) logRows = logRows.slice(-3000);
   updateLogCount();
+  updateTrialTracking(now);
 
   updateCompareDisplay();
   stimValueDisplay.textContent = Math.round(controllerIntensity);
@@ -3997,6 +4012,54 @@ function updateLogCount() {
   logCountText.textContent = logRows.length;
 }
 
+// controlEnabled(▶ 제어 시작)로 목표를 실제로 쫓고 있는 동안만 관찰한다 --
+// 대기 중/비상정지/목표 없음일 때는 시행으로 안 치고 관찰을 멈춘다.
+function updateTrialTracking(now) {
+  if (!controlEnabled || safetyTripped || targetPercent === null) {
+    trialAttemptStart = null;
+    return;
+  }
+  if (controlState === "LOCKED" || controlState === "SUCCESS") {
+    if (trialAttemptStart !== null) {
+      recordTrial("성공", (now - trialAttemptStart) / 1000);
+      trialAttemptStart = null; // 도달해서 유지 중인 동안은 다음 시도를 세지 않음 -- 목표를 벗어나야(또는 새 목표) 다시 시작
+    }
+    return;
+  }
+  if (trialAttemptStart === null) {
+    trialAttemptStart = now; // 목표를 향해 다시 움직이기 시작 -- 새 시도 개시
+    return;
+  }
+  if (now - trialAttemptStart > TRIAL_TIMEOUT_MS) {
+    recordTrial("실패", null);
+    trialAttemptStart = now; // 바로 다음 시도 관찰 시작
+  }
+}
+
+function recordTrial(result, seconds) {
+  trialLog.push({
+    n: trialLog.length + 1,
+    result,
+    seconds,
+    target: targetPercent === null ? null : Math.round(targetPercent),
+    actual: currentAverage === null ? null : Math.round(currentAverage),
+    time: new Date().toLocaleTimeString("ko-KR")
+  });
+  updateTrialCountUI();
+  const successCount = trialLog.filter((t) => t.result === "성공").length;
+  logControl(
+    result === "성공"
+      ? `🎯 도달 성공 (${seconds.toFixed(1)}초) -- 누적 ${successCount}/${trialLog.length}회`
+      : `⏱ 12초 안에 도달 못함(실패) -- 누적 ${successCount}/${trialLog.length}회`
+  );
+}
+
+function updateTrialCountUI() {
+  const successCount = trialLog.filter((t) => t.result === "성공").length;
+  trialCountText.textContent = trialLog.length;
+  trialSuccessCountText.textContent = successCount;
+}
+
 function resizeGraphs() {
   for (const c of [graphPercentCanvas, graphIntensityCanvas, graphPersonalizationCanvas]) {
     c.width = c.clientWidth;
@@ -4056,23 +4119,52 @@ function drawLineGraph(gfxCtx, rows, series) {
   }
 }
 
+// ⚠ 예전엔 카메라 프레임마다(매 tick) 한 줄씩 그대로 CSV로 내보내서, 몇 분만
+// 써도 수천 줄짜리 원본 로그가 됐다 -- 사람이 보고 "몇 번 시도해서 몇 번
+// 성공했는지" 바로 알기 어려웠다. 이제 위 trialLog(도달 시행 기록)를 기준으로
+// "시행 번호/성공·실패/도달 시간" 한 줄 = 시도 1회로 뽑고, 맨 위에 요약(총
+// 시행/성공/성공률/평균 도달 시간)을 붙인다. 원본 tick 로그가 필요하면 아래
+// "원본 tick 기록" 표에서 그대로 가져간다(참고용으로 남겨둠).
 function downloadCsv() {
-  const header = "timestamp_ms,target_percent,current_percent,ems_intensity,error,control_state,success,hand_detected\n";
-  const body = logRows
-    .map((r) =>
-      [
-        r.t.toFixed(1),
-        r.target === null ? "" : r.target.toFixed(2),
-        r.current === null ? "" : r.current.toFixed(2),
-        r.intensity,
-        r.error === null ? "" : r.error.toFixed(2),
-        r.state,
-        r.success ? 1 : 0,
-        r.handDetected ? 1 : 0
-      ].join(",")
-    )
-    .join("\n");
-  const blob = new Blob([header + body], { type: "text/csv;charset=utf-8;" });
+  const successRows = trialLog.filter((t) => t.result === "성공");
+  const avgSeconds =
+    successRows.length > 0
+      ? successRows.reduce((sum, t) => sum + t.seconds, 0) / successRows.length
+      : null;
+  const successRate = trialLog.length > 0 ? (successRows.length / trialLog.length) * 100 : 0;
+
+  const summaryLines = [
+    "요약",
+    `총 시행 횟수,${trialLog.length}`,
+    `성공 횟수,${successRows.length}`,
+    `실패 횟수,${trialLog.length - successRows.length}`,
+    `성공률(%),${successRate.toFixed(1)}`,
+    `평균 도달 시간(성공만·초),${avgSeconds === null ? "-" : avgSeconds.toFixed(1)}`,
+    "",
+    "시행별 결과",
+    "시행 번호,결과,도달 시간(초),목표 %,실제 %,시각"
+  ];
+  const trialLines = trialLog.map((t) =>
+    [t.n, t.result, t.seconds === null ? "-" : t.seconds.toFixed(1), t.target ?? "", t.actual ?? "", t.time].join(",")
+  );
+
+  // 원본 tick 로그도 참고용으로 아래에 이어 붙인다(필요 없으면 그냥 무시하면 됨).
+  const rawHeader = ["", "원본 tick 기록(참고용)", "timestamp_ms,target_percent,current_percent,ems_intensity,error,control_state,success,hand_detected"];
+  const rawLines = logRows.map((r) =>
+    [
+      r.t.toFixed(1),
+      r.target === null ? "" : r.target.toFixed(2),
+      r.current === null ? "" : r.current.toFixed(2),
+      r.intensity,
+      r.error === null ? "" : r.error.toFixed(2),
+      r.state,
+      r.success ? 1 : 0,
+      r.handDetected ? 1 : 0
+    ].join(",")
+  );
+
+  const csv = [...summaryLines, ...trialLines, ...rawHeader, ...rawLines].join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" }); // BOM -- 엑셀에서 한글 안 깨지게
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
