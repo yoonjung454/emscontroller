@@ -3090,10 +3090,14 @@ function liveOutputAllowedByConfig() {
   return { ok: true };
 }
 
+// ⚠ 요청에 따라 "오른손/오른팔을 카메라가 놓치면 비상정지"를 없앴다 --
+// handLost 인자는 더 이상 안 쓰지만(호출부를 다 바꾸지 않으려고) 그대로
+// 받기만 하고 무시한다. 손을 놓친 동안은(handLostSustained/armLostSustained)
+// 각 모드의 컨트롤러가 WAITING_FOR_HAND로 표시하고 목표 추적만 잠깐
+// 멈추며, 이 함수가 강제로 완전 정지시키지는 않는다.
 function runtimeCheck(handLost) {
   if (!liveModeRequested) return { ok: true };
   if (!serialLink || !serialLink.isConnected()) return { ok: false, reason: "시리얼 연결이 끊어졌습니다." };
-  if (handLost) return { ok: false, reason: appMode === "arm" ? "오른팔(ACTUAL)을 카메라가 놓쳤습니다." : "오른손(ACTUAL)을 카메라가 놓쳤습니다." };
   if (continuousStimExceeded()) return { ok: false, reason: "최대 연속 자극 시간을 초과했습니다." };
   if (totalTimeExceeded()) return { ok: false, reason: "전체 실험 제한시간을 초과했습니다." };
   return { ok: true };
