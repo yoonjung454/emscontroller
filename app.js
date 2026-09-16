@@ -484,6 +484,7 @@ const mirrorModeCard = document.getElementById("mirrorModeCard");
 const actionModeCard = document.getElementById("actionModeCard");
 const armModeCard = document.getElementById("armModeCard");
 const armCalCard = document.getElementById("armCalCard");
+const mirrorArmControlPanel = document.getElementById("mirrorArmControlPanel");
 const testModeCard = document.getElementById("testModeCard");
 
 const actionButtonsRow = document.getElementById("actionButtonsRow");
@@ -2240,6 +2241,10 @@ function setAppMode(mode) {
   // 팔 인식 모드뿐 아니라 행동 보조 모드도 이 값이 필요하므로(actionCalibrationReady)
   // 두 모드 모두에서 보이게 한다.
   armCalCard.style.display = (mode === "arm" || mode === "action") ? "" : "none";
+  // 행동 보조 모드는 ⑤ 카드의 공용 제어(controlEnabled) 플로우를 안 써서 이
+  // 패널이 항상 대기중/0으로 고정돼 있다 -- 위에 따로 생긴 손/팔꿈치 칸과
+  // 헷갈리지 않게 행동 보조 모드일 땐 숨긴다(기록 로그는 계속 보여줌).
+  mirrorArmControlPanel.style.display = mode === "action" ? "none" : "";
   modeMirrorBtn.classList.toggle("selected", mode === "mirror");
   modeActionBtn.classList.toggle("selected", mode === "action");
   modeArmBtn.classList.toggle("selected", mode === "arm");

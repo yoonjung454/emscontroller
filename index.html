@@ -698,40 +698,49 @@
 
     <div class="card">
       <h2>⑤ 목표 vs 실제 비교 &amp; 자극 제어 (실시간 모니터링)</h2>
-      <div class="compare-grid">
-        <div class="compare-box">
-          <div class="compare-label" id="targetCompareLabel">TARGET (행동 선택 / 실시간 왼손 연동)</div>
-          <div class="compare-value" id="targetValueDisplay">-</div>
+      <!-- 이 칸(TARGET/ACTUAL/오차 + 제어 시작/해제 버튼)은 거울 모드와 팔 인식
+           모드(팔꿈치/채널2 쪽)가 실제로 쓰는 공용 제어 상태를 보여준다. 행동
+           보조 모드는 이 controlEnabled 플로우를 아예 안 쓰고 자기만의 실행
+           버튼/폐루프를 따로 갖고 있어서, 여기 숫자는 항상 대기중/0으로
+           고정돼 있어 행동 보조 모드에서는 의미가 없다(오히려 위에 새로
+           생긴 손/팔꿈치 칸과 헷갈릴 수 있음) -- 그래서 행동 보조 모드일 땐
+           이 부분만 숨기고, 모든 모드가 공용으로 쓰는 기록(로그)은 계속 보여준다. -->
+      <div id="mirrorArmControlPanel">
+        <div class="compare-grid">
+          <div class="compare-box">
+            <div class="compare-label" id="targetCompareLabel">TARGET (행동 선택 / 실시간 왼손 연동)</div>
+            <div class="compare-value" id="targetValueDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label" id="actualCompareLabel">ACTUAL (오른손 · 4손가락 평균)</div>
+            <div class="compare-value" id="actualValueDisplay">-</div>
+          </div>
+          <div class="compare-box">
+            <div class="compare-label">오차</div>
+            <div class="compare-value" id="errorValueDisplay">-</div>
+          </div>
         </div>
-        <div class="compare-box">
-          <div class="compare-label" id="actualCompareLabel">ACTUAL (오른손 · 4손가락 평균)</div>
-          <div class="compare-value" id="actualValueDisplay">-</div>
+        <div class="stim-row">
+          <div>
+            <div class="hint">EMS 제어값 (0~100, mA 아님) <span class="pill" id="activeChannelPill">채널1 (구부림)</span></div>
+            <div class="stim-value" id="stimValueDisplay">0</div>
+            <div class="hint" id="hardwareSentHint" style="margin-top:2px;">실제 전송값: -</div>
+          </div>
+          <button class="primary" id="startControlBtn">▶ 제어 시작</button>
+          <button class="reset" id="releaseHoldBtn">⏹ 해제</button>
+          <div style="text-align:right;">
+            <div class="hint">경과 시간</div>
+            <div class="stim-value" id="elapsedDisplay" style="font-size:20px;">0s</div>
+          </div>
         </div>
-        <div class="compare-box">
-          <div class="compare-label">오차</div>
-          <div class="compare-value" id="errorValueDisplay">-</div>
-        </div>
+        <div class="state-line">판단 상태: <b id="controlStateText">대기</b></div>
+        <p class="hint" id="holdBehaviorHint" style="margin-top:4px;">
+          오차가 허용범위 안에 <b id="successHoldSecText">-</b>초 이상 머물면 "도달 완료"로 판정하고,
+          해제 버튼(또는 ■ 제어 정지)을 누르기 전까지 <b>계속 전류를 흘립니다</b> (짧은 펄스가 아닌 연속 출력).
+          ③ 카드의 "연속 자극 시간 제한"(기본 60초)을 넘기면 안전상 자동 정지되니, 더 오래 유지하려면
+          거기서 직접 늘려주세요. 새 목표를 주면 자동으로 해제됩니다.
+        </p>
       </div>
-      <div class="stim-row">
-        <div>
-          <div class="hint">EMS 제어값 (0~100, mA 아님) <span class="pill" id="activeChannelPill">채널1 (구부림)</span></div>
-          <div class="stim-value" id="stimValueDisplay">0</div>
-          <div class="hint" id="hardwareSentHint" style="margin-top:2px;">실제 전송값: -</div>
-        </div>
-        <button class="primary" id="startControlBtn">▶ 제어 시작</button>
-        <button class="reset" id="releaseHoldBtn">⏹ 해제</button>
-        <div style="text-align:right;">
-          <div class="hint">경과 시간</div>
-          <div class="stim-value" id="elapsedDisplay" style="font-size:20px;">0s</div>
-        </div>
-      </div>
-      <div class="state-line">판단 상태: <b id="controlStateText">대기</b></div>
-      <p class="hint" id="holdBehaviorHint" style="margin-top:4px;">
-        오차가 허용범위 안에 <b id="successHoldSecText">-</b>초 이상 머물면 "도달 완료"로 판정하고,
-        해제 버튼(또는 ■ 제어 정지)을 누르기 전까지 <b>계속 전류를 흘립니다</b> (짧은 펄스가 아닌 연속 출력).
-        ③ 카드의 "연속 자극 시간 제한"(기본 60초)을 넘기면 안전상 자동 정지되니, 더 오래 유지하려면
-        거기서 직접 늘려주세요. 새 목표를 주면 자동으로 해제됩니다.
-      </p>
       <div class="log-box" id="controlLog"></div>
     </div>
 
