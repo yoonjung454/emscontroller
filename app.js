@@ -2886,6 +2886,7 @@ function bicepClosedLoopTick(state) {
     // 도달하거나 그 이하가 되는 즉시 다음 단계로 넘어간다.
     if (armLatestPercent.actual !== null && armLatestPercent.actual <= state.elbowReleaseTarget) {
       if (state.repIndex >= state.reps) {
+        speak("완료되었습니다");
         stopActionMode(`이두운동 ${state.reps}회 완료`);
         return;
       }
