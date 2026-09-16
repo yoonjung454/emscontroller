@@ -10,6 +10,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // 정의부에 두면 TDZ로 인해 "Cannot access before initialization" 오류가 난다).
 const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
 let voiceRecognition = null;
+// 같은 이유(페이지 초기화 시점에 바로 켜는 코드가 아래쪽 함수보다 먼저 이
+// 값들을 참조함)로 이 넷도 여기 맨 위에 둔다 -- 탱글이 음성 비서 상태.
+const VOICE_AWAKE_WINDOW_MS = 10000;
+let voiceEnabled = false;          // 마이크 버튼/자동 시작으로 켠 상태 -- 켜져 있으면 onend에서 계속 재시작해서 "항상 듣는 중"이 됨
+let voiceAwakeUntil = 0;           // performance.now() 기준, 이 시각까지는 이름을 부른 것으로 치고 명령을 받아들임
+let voicePendingBicepReps = false; // "이두운동해줘" 듣고 몇 회인지 되묻는 중인지
 
 // ============================================================================
 // Supabase (참가자별 캘리브레이션/개인화 프로필 클라우드 저장)
@@ -2295,10 +2301,10 @@ function saveActionInputs(key, btn) {
 // 파일 맨 위쪽 상수 선언부로 옮겨뒀다 -- 여기 남겨두면 TDZ로 인해
 // "Cannot access before initialization" 오류가 난다.)
 
-const VOICE_AWAKE_WINDOW_MS = 10000;
-let voiceEnabled = false;          // 마이크 버튼으로 켠 상태 -- 켜져 있으면 onend에서 계속 재시작해서 "항상 듣는 중"이 됨
-let voiceAwakeUntil = 0;           // performance.now() 기준, 이 시각까지는 이름을 부른 것으로 치고 명령을 받아들임
-let voicePendingBicepReps = false; // "이두운동해줘" 듣고 몇 회인지 되묻는 중인지
+// (VOICE_AWAKE_WINDOW_MS/voiceEnabled/voiceAwakeUntil/voicePendingBicepReps는
+// 페이지 로딩 시 자동으로 마이크를 켜는 코드가 이 함수들보다 먼저 실행되는
+// 중에 이미 참조하므로, 파일 맨 위쪽 상수 선언부로 옮겨뒀다 -- 바로 위 문단
+// 설명과 같은 TDZ 문제라 여기 남겨두면 안 됨.)
 
 function speak(text) {
   try {
