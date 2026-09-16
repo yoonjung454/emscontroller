@@ -103,55 +103,10 @@ const SWEEP_SAMPLE_MS = 1200; // 유지 구간의 마지막 이만큼만 평균�
 const SWEEP_REST_MS = 2500;   // 다음 단계로 넘어가기 전 0으로 쉬는 시간
 const SWEEP_RESEND_MS = 900;  // SET 명령 재전송 주기 (TTL 만료로 자극이 끊기지 않게)
 
-// ============================================================================
-// 행동 버튼 (미리 정의된 목표 동작)
-// ============================================================================
-// "행동"을 고르면 그 행동에 미리 정의된 목표 동작을 그대로 불러와 폐루프
-// 제어에 사용한다 (왼손 캡처 대신). 카메라는 오른손 측정(피드백) 용도로 쓰이고,
-// 왼손은 아래 "실시간 왼손 연동"을 켰을 때만 쓰인다.
-//
-// targetPercent는 지금은 전부 PLACEHOLDER 값이다 -- 실제 관절각/손가락 굽힘률을
-// 측정해서 넣은 게 아니라, 구조와 UI(행동 선택 → 목표 데이터 생성 → 피드백 비교)를
-// 먼저 완성해두기 위한 임시 수치다. targetPerFinger를 나중에 채우면(4손가락 개별
-// 목표) 손가락별 제어로 확장할 수 있게 필드를 미리 열어뒀다 (지금은 전부 null --
-// 채워지면 targetPercent 대신 이쪽이 우선 사용되도록 selectAction()에서 처리).
-const ACTIONS = [
-  {
-    id: "grip_cup",
-    label: "컵 잡기",
-    description: "컵이나 음료 용기를 잡는 동작",
-    targetPercent: 55,   // placeholder
-    targetPerFinger: null // 나중에 { Index: .., Middle: .., Ring: .., Little: .., Thumb: .. } 로 교체
-  },
-  {
-    id: "pour",
-    label: "따르기 동작",
-    description: "잡은 용기를 기울여 음료를 따르는 동작",
-    targetPercent: 45,   // placeholder
-    targetPerFinger: null
-  },
-  {
-    id: "shake",
-    label: "흔들기 동작",
-    description: "용기를 잡고 흔드는 동작",
-    targetPercent: 60,   // placeholder
-    targetPerFinger: null
-  },
-  {
-    id: "elbow_flex",
-    label: "팔 굽히기",
-    description: "팔꿈치를 굽히는 동작",
-    targetPercent: 70,   // placeholder -- 현재 시스템은 손가락 굽힘 축만 제어하므로 임시로 같은 축을 사용
-    targetPerFinger: null
-  },
-  {
-    id: "release",
-    label: "물건 놓기",
-    description: "잡고 있던 물체를 놓는 동작",
-    targetPercent: 5,    // placeholder
-    targetPerFinger: null
-  }
-];
+// (예전엔 여기 "행동 버튼" ACTIONS 배열이 있었다 -- 컵 잡기/따르기 동작/흔들기
+// 동작/팔 굽히기/물건 놓기 등 미리 정의된 목표 동작 버튼. 전부 실제 측정
+// 데이터가 아닌 PLACEHOLDER 수치였고, 거울 모드는 실시간 왼손 연동 하나로
+// 충분하다고 판단해 제거했다. 필요해지면 이전 대화 기록에서 복구 가능.)
 
 // 제어값 갱신 주기(config.control.controlPeriodMs, 기본 6초)를 이 배수로 나눠서
 // 더 빠르게 반응하게 한다.
@@ -160,11 +115,9 @@ function getControlPeriodMs() {
   return config.control.controlPeriodMs / CONTROL_SPEED_MULTIPLIER;
 }
 
-let selectedAction = null;
-// 행동 버튼 대신 쓸 수 있는 실시간 연동 -- 켜져 있으면 매 프레임 왼손(SOURCE)의
-// 현재 굽힘값을 그대로 목표로 흘려보낸다 (한 번 얼리는 스냅샷이 아니라 계속
-// 갱신됨). 왼손엔 EMS 패치가 없고 카메라로만 측정되고, 실제 전기자극은
-// 오른손(ACTUAL)에만 나간다.
+// 켜져 있으면 매 프레임 왼손(SOURCE)의 현재 굽힘값을 그대로 목표로 흘려보낸다
+// (한 번 얼리는 스냅샷이 아니라 계속 갱신됨). 왼손엔 EMS 패치가 없고 카메라로만
+// 측정되고, 실제 전기자극은 오른손(ACTUAL)에만 나간다.
 let liveMirrorActive = false;
 
 // 앱 모드 -- "mirror"(거울 모드) | "action"(행동 보조 모드, 오픈루프 -- 회원
@@ -498,7 +451,6 @@ const armCalCard = document.getElementById("armCalCard");
 const mirrorArmControlPanel = document.getElementById("mirrorArmControlPanel");
 const testModeCard = document.getElementById("testModeCard");
 
-const actionButtonsRow = document.getElementById("actionButtonsRow");
 const selectedActionText = document.getElementById("selectedActionText");
 const actionDescriptionText = document.getElementById("actionDescriptionText");
 const targetCompareLabel = document.getElementById("targetCompareLabel");
@@ -673,7 +625,7 @@ function flashButtonPress(btn, tempLabel, durationMs = 1200) {
 
 buildTable();
 // buildSourceLiveTable(); -- 예전 거울 모드 카드 제거로 비활성화 (위 DOM 참조 주석 참고)
-buildActionButtons();
+// buildActionButtons(); -- 거울 모드의 미리 정의된 행동 버튼(placeholder) 제거로 비활성화
 initVoiceCommand();
 initSafetyUi();
 initPresetLabels();
@@ -1465,6 +1417,14 @@ function processResult(result, poseResult) {
       }
     }
   } else if (!controlEnabled) {
+    // ⚠ 버그 수정: 예전엔 이 분기(제어 시작 전)에서 실시간 왼손 연동 타겟을
+    // 아예 갱신하지 않아서, "실시간 왼손 연동 시작"을 눌러도 "▶ 제어 시작"까지
+    // 눌러야만 TARGET 값이 나왔다. 실제 전기자극(controllerIntensity)은 여전히
+    // 제어 시작을 눌러야 나가는 게 맞지만, 목표값 표시 자체는 연동을 시작하는
+    // 즉시 보여야 자연스러워서 여기서도 갱신한다.
+    if (liveMirrorActive) {
+      updateLiveMirrorTarget();
+    }
     controlState = "STANDBY";
     lastError = null;
     controllerIntensity = 0;
@@ -2089,59 +2049,11 @@ function applyUniformTarget(percent) {
 // 그대로 재사용한다. 컨트롤러/안전 로직은 전혀 새로 만들지 않았다.
 // ============================================================================
 
-function buildActionButtons() {
-  actionButtonsRow.innerHTML = "";
-  for (const action of ACTIONS) {
-    const btn = document.createElement("button");
-    btn.className = "preset";
-    btn.id = `actionBtn-${action.id}`;
-    btn.textContent = action.label;
-    btn.addEventListener("click", () => selectAction(action));
-    actionButtonsRow.appendChild(btn);
-  }
-}
-
-function selectAction(action) {
-  // 프리셋 행동과 실시간 왼손 연동은 동시에 쓰지 않는다 -- 행동을 고르면 실시간
-  // 연동은 자동으로 꺼진다.
-  if (liveMirrorActive) stopLiveMirror();
-
-  selectedAction = action;
-  selectedActionText.textContent = action.label;
-
-  for (const btn of actionButtonsRow.querySelectorAll("button")) {
-    btn.classList.toggle("selected", btn.id === `actionBtn-${action.id}`);
-  }
-
-  const hasTarget = action.targetPerFinger || typeof action.targetPercent === "number";
-  if (!hasTarget) {
-    actionDescriptionText.textContent = `${action.description} -- ⚠ 아직 목표 동작 데이터가 입력되지 않았습니다.`;
-    logControl(`행동 선택: ${action.label} -- 목표 데이터 미설정`);
-    showToast(`⚠ "${action.label}"의 목표 동작 데이터가 아직 없습니다`, "warn");
-    return;
-  }
-  if (isInCooldown()) {
-    showToast(`⏳ 쿨다운 중입니다 (${cooldownRemainingSeconds().toFixed(1)}s 남음) — 잠시 후 다시 시도하세요`, "warn", 3500);
-    return;
-  }
-
-  if (action.targetPerFinger) {
-    // 손가락별 목표 데이터가 채워지면 이쪽을 우선 사용 (현재는 항상 null이라
-    // 아래 targetPercent 분기로 감).
-    for (const finger of DISPLAY_FINGER_KEYS) targetPerFinger[finger] = action.targetPerFinger[finger] ?? null;
-    const avg = computeAverage(targetPerFinger);
-    setTarget(avg ?? action.targetPercent, suggestInitialIntensity(avg ?? action.targetPercent));
-  } else {
-    for (const finger of DISPLAY_FINGER_KEYS) targetPerFinger[finger] = action.targetPercent;
-    setTarget(action.targetPercent, suggestInitialIntensity(action.targetPercent));
-  }
-  updateCompareDisplay();
-  updateFingerTable();
-
-  actionDescriptionText.textContent = `${action.description} (목표 ${action.targetPercent}% -- placeholder 값)`;
-  logControl(`🎯 행동 선택: ${action.label} → 목표 ${action.targetPercent}% (placeholder)`);
-  showToast(`✅ "${action.label}" 목표 설정 (placeholder ${action.targetPercent}%)`, "ok");
-}
+// (예전엔 여기 buildActionButtons()/selectAction()이 있었다 -- "컵 잡기/따르기
+// 동작/흔들기 동작/팔 굽히기/물건 놓기" 같은 미리 정의된(placeholder 목표값)
+// 행동 버튼들. 실제 측정 데이터가 아니라 전부 임시 수치였고 거울 모드는
+// 실시간 왼손 연동만 쓰기로 하면서 제거했다. 필요해지면 이전 대화 기록의
+// ACTIONS 배열/이 두 함수로 복구 가능.)
 
 // ---- 실시간 왼손 연동 (Live Mirror) ------------------------------------------
 
@@ -2168,10 +2080,8 @@ function startLiveMirror() {
     return;
   }
   liveMirrorActive = true;
-  selectedAction = null;
-  selectedActionText.textContent = "없음 (실시간 왼손 연동 중)";
+  selectedActionText.textContent = "실시간 왼손 연동 중";
   actionDescriptionText.textContent = "왼손의 지금 굽힘 정도가 계속 오른손 목표로 흘러갑니다.";
-  for (const btn of actionButtonsRow.querySelectorAll("button")) btn.classList.remove("selected");
   liveMirrorBtn.textContent = "⏹ 실시간 연동 중지";
   liveMirrorBtn.classList.add("running");
   logControl("🔴 실시간 왼손 연동 시작");
@@ -2189,8 +2099,8 @@ function stopLiveMirror() {
   controllerIntensity = 0;
   activeChannel = 1;
   controlState = "STANDBY";
-  selectedActionText.textContent = "없음";
-  actionDescriptionText.textContent = "행동을 선택하면 여기에 설명과 목표값이 표시됩니다.";
+  selectedActionText.textContent = "대기 중";
+  actionDescriptionText.textContent = "실시간 왼손 연동을 시작하면 여기에 표시됩니다.";
   updateCompareDisplay();
   updateFingerTable();
   logControl("⏹ 실시간 왼손 연동 중지");

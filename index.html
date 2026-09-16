@@ -417,16 +417,8 @@
     <div class="card" id="mirrorModeCard">
       <h2>④ 거울 모드</h2>
       <p class="hint">
-        행동 버튼을 누르면 그 행동에 미리 정의된 목표 동작을 불러오거나, 아래 "실시간 왼손 연동"으로
-        왼손의 지금 동작을 계속 오른손 목표로 흘려보냅니다. 폐루프 제어(오차 계산/자동 조절)는
-        아래 ⑤ 카드에서 확인합니다.
-      </p>
-      <div class="btn-row" style="margin-top:10px;" id="actionButtonsRow"></div>
-      <div class="state-line" style="margin-top:10px;">선택한 행동: <b id="selectedActionText">없음</b></div>
-      <p class="hint" id="actionDescriptionText" style="margin-top:4px;">행동을 선택하면 여기에 설명과 목표값이 표시됩니다.</p>
-      <p class="hint" style="margin-top:8px;">
-        ⚠️ 지금은 각 행동의 목표값이 <b>임시(placeholder) 수치</b>입니다 -- 실제 관절각/손가락 굽힘률 측정
-        데이터로 나중에 교체될 예정입니다. 목표/실제/오차/상태는 아래 ⑤ 카드에서 확인합니다.
+        "실시간 왼손 연동"으로 왼손의 지금 동작을 계속 오른손 목표로 흘려보냅니다. 폐루프
+        제어(오차 계산/자동 조절)는 아래 ⑤ 카드에서 확인합니다.
       </p>
 
       <div class="sub-section">
@@ -434,14 +426,15 @@
           실시간 왼손 연동 (Live Mirror)
         </div>
         <p class="hint" style="margin-top:4px;">
-          행동 버튼 대신, <b>왼손의 지금 이 순간 굽힘 정도를 계속 그대로</b> 오른손 목표로 흘려보냅니다
-          (캡처처럼 한 번 얼리는 게 아니라 프레임마다 갱신). 왼손에는 EMS 패치가 없고 카메라로만 측정되며,
-          실제 전기자극은 오른손에만 나갑니다. 시작 전 <b>② 초기값 측정 완료</b>가 필요합니다 (왼손/오른손 공용
-          보정값 사용).
+          <b>왼손의 지금 이 순간 굽힘 정도를 계속 그대로</b> 오른손 목표로 흘려보냅니다(프레임마다
+          갱신). 왼손에는 EMS 패치가 없고 카메라로만 측정되며, 실제 전기자극은 오른손에만 나갑니다.
+          시작 전 <b>② 초기값 측정 완료</b>가 필요합니다 (왼손/오른손 공용 보정값 사용).
         </p>
         <div class="btn-row" style="margin-top:8px;">
           <button class="primary" id="liveMirrorBtn">🔴 실시간 왼손 연동 시작</button>
         </div>
+        <div class="state-line" style="margin-top:10px;">상태: <b id="selectedActionText">대기 중</b></div>
+        <p class="hint" id="actionDescriptionText" style="margin-top:4px;">실시간 왼손 연동을 시작하면 여기에 표시됩니다.</p>
       </div>
     </div>
 
