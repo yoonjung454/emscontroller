@@ -206,17 +206,19 @@ const DEFAULT_CONFIG = {
     // 맞췄다. 중간값(0.017/0.85) -> 3배(0.051/2.55) -> 거기서 다시 2배(0.102/5.1)
     // -> 팔 인식 모드에서 "큰 폭으로 곱해서 뛰는 것처럼 보인다"는 피드백을 받고,
     // maxStep을 1로 낮춰서 진짜 "1씩 점진적으로" 올라가게 바꾸고, 그만큼 줄어든
-    // 한 스텝당 양을 보충하려고 주기(controlPeriodMs)도 6000 -> 2250으로 줄였다.
-    // 결과적으로 큰 오차 구간(예전엔 2400ms마다 5.1씩)에서의 속도가 옛날의 절반
-    // 정도(900ms마다 1씩)가 되어, 목표 도달 시간이 대략 2배가 된다 -- 대신
-    // 숫자가 뛰지 않고 1씩 세는 것처럼 부드럽게 올라간다.
+    // 한 스텝당 양을 보충하려고 주기(controlPeriodMs)도 6000 -> 2250(900ms마다
+    // 1씩)으로 줄였다 -- 이때는 "숫자가 부드럽게 1씩 오르되 목표 도달 시간은
+    // 대략 2배로 느려짐"이 목적이었음.
+    // -> 수저 들기 보조에서 "채널2(팔꿈치) 올라가는 속도가 너무 느리다"는
+    // 피드백을 받고, maxStep(1씩 점진적)은 그대로 두고 주기만 3배 더 줄여서
+    // (900ms -> 300ms) 부드러운 느낌은 유지한 채 전체 속도만 3배로 올림.
     kpUp: 0.102,
     kpDown: 0.102,
     tolerancePercent: 5,
     successHoldSeconds: 1.5,
     maxStepUp: 1,
     maxStepDown: 1,
-    controlPeriodMs: 2250 // getControlPeriodMs() = 2250/2.5 = 900ms마다 최대 1씩
+    controlPeriodMs: 750 // getControlPeriodMs() = 750/2.5 = 300ms마다 최대 1씩 (900ms의 1/3)
   },
   safety: {
     maxIntensity: 0,
@@ -2547,7 +2549,7 @@ async function startSpoonLiftClosedLoop() {
   logControl(`🎬 행동 보조 모드: ${def.label} 시작 (손 목표=${handTarget}%, 팔꿈치 목표=${elbowTarget}%, 자동 세팅)`);
   showToast(`▶ ${def.label} 실행 (자동으로 세기를 찾는 중)`, "ok");
 
-  const state = { handTarget, elbowTarget, phase: "hand" }; // hand -> elbow -> (팔꿈치 LOCKED되면 완료 처리 후 정지)
+  const state = { handTarget, elbowTarget }; // 손/팔꿈치 동시 진행 -- 둘 다 LOCKED되면 완료 처리 후 정지
   spoonLiftTick(state); // 즉시 한 번 전송
   actionModeInterval = setInterval(() => spoonLiftTick(state), 400);
 }
@@ -2567,42 +2569,30 @@ function spoonLiftTick(state) {
   const now = performance.now();
   const handAverage = computeAverage(latestPercent.actual);
 
+  // ⚠ 설계 변경: 예전엔 손이 먼저 목표에 도달하면 멈추고 그 다음 팔꿈치로
+  // "순차" 진행했는데, 실제로 수저를 드는 동작은 손을 쥐는 것과 팔꿈치를
+  // 드는 것이 동시에 일어나야 자연스럽다는 피드백을 받고 다시 동시 진행으로
+  // 되돌렸다. 손/팔꿈치 둘 다 매 tick 그대로 목표를 향해 움직이고, 각자
+  // 목표에 도달하면 그 축만 유지(LOCKED)하다가 둘 다 도달하면 완료 처리한다.
   if (handLostSustained || armLostSustained) {
     actionHandCtrl.state = "WAITING_FOR_HAND";
     actionElbowCtrl.state = "WAITING_FOR_HAND";
-  } else if (state.phase === "hand") {
+  } else {
     stepFlexOnlyAxis(actionHandCtrl, state.handTarget, handAverage, now);
-    if (actionHandCtrl.state === "LOCKED") {
-      // 손 목표 도달 -- 전류를 멈추고 채널2(팔꿈치)로 넘어간다.
-      actionHandCtrl.intensity = 0;
-      actionHandCtrl.state = "STANDBY";
-      actionHandCtrl.successSince = null;
-      state.phase = "elbow";
-      logControl("✅ 손(채널1) 목표 도달 -- 전류를 멈추고 팔꿈치(채널2)로 진행합니다");
-      showToast("✅ 손 목표 도달! 이제 팔꿈치를 들어올릴게요", "ok", 4000);
-    }
-  } else if (state.phase === "elbow") {
-    actionHandCtrl.intensity = 0;
-    actionHandCtrl.state = "STANDBY";
     stepFlexOnlyAxis(actionElbowCtrl, state.elbowTarget, armLatestPercent.actual, now);
-    if (actionElbowCtrl.state === "LOCKED") {
-      // ⚠ 버그 수정: 여기서 phase만 "done"으로 바꾸고 손/팔꿈치 세기 계산을
-      // 멈추면, stepFlexOnlyAxis를 더 이상 안 불러서 마지막 intensity 값이
-      // "그대로 얼어붙은 채" 계속 하드웨어로 재전송됐다 -- 목표에 도달해도
-      // 전류가 안 멈추고 계속 나가던 원인. 목표(구부림)에 도달하면 실제로
-      // 전류를 멈춰야 한다는 요청대로, 여기서 행동 자체를 완료 처리하고 정지한다.
+    if (actionHandCtrl.state === "LOCKED" && actionElbowCtrl.state === "LOCKED") {
+      // ⚠ 버그 수정(이전과 동일한 종류): 도달해도 계속 유지만 하면 마지막
+      // intensity가 "그대로 얼어붙은 채" 계속 하드웨어로 재전송된다 --
+      // 목표에 도달하면 실제로 전류를 멈춰야 하므로 완료 처리하고 정지한다.
       stopActionMode("✅ 목표 도달 -- 수저 들기 보조 완료");
       return;
     }
   }
 
-  // phase는 "hand" -> "elbow"만 거친다 -- 팔꿈치까지 LOCKED되면 위에서 바로
-  // stopActionMode()로 완료 처리하고 return하므로 "done" 단계는 따로 없다.
-  const phaseLabel = state.phase === "hand" ? "① 손 그립 중" : "② 팔꿈치 들어올리는 중";
   actionHandStateText.textContent = `${STATE_LABELS[actionHandCtrl.state] || actionHandCtrl.state} (${Math.round(actionHandCtrl.intensity)})`;
   actionElbowStateText.textContent = `${STATE_LABELS[actionElbowCtrl.state] || actionElbowCtrl.state} (${Math.round(actionElbowCtrl.intensity)})`;
   actionModeStatusText.textContent =
-    `수저 들기 보조: ${phaseLabel} -- 손 ${Math.round(handAverage ?? 0)}%/${state.handTarget}% · 팔꿈치 ${Math.round(armLatestPercent.actual ?? 0)}%/${state.elbowTarget}%`;
+    `수저 들기 보조: 손/팔꿈치 동시 진행 -- 손 ${Math.round(handAverage ?? 0)}%/${state.handTarget}% · 팔꿈치 ${Math.round(armLatestPercent.actual ?? 0)}%/${state.elbowTarget}%`;
 
   // 발표용 큰 TARGET/ACTUAL/오차/세기 칸(팔 인식 모드와 같은 스타일)
   updateCompareBoxes(actionHandTargetDisplay, actionHandActualDisplay, actionHandErrorDisplay, state.handTarget, handAverage);
