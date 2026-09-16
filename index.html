@@ -505,33 +505,6 @@
       </div>
 
       <div class="sub-section">
-        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">🎯 개인화 측정 (목표 도달 세기 자동 탐색)</div>
-        <p class="hint" style="margin-top:4px;">
-          지금 측정할 행동을 먼저 고르세요. 그 다음 손/팔꿈치를 각각 몇 %까지 구부릴지 목표를
-          정하고 "개인화 측정 시작"을 누르면, <b>손부터</b> 전류를 서서히 올려 <b>목표 ±5% 안에
-          들어오는 순간 전류를 멈추고 그때의 세기를 기록</b>합니다. 손이 끝나면 이어서
-          <b>팔꿈치</b>도 같은 방식으로 측정합니다. 회원번호를 입력해뒀으면 이 결과가 그 회원
-          정보로 저장되어, 아래 실행 버튼을 누를 때 매번 0부터 다시 찾지 않고 이 세기부터 바로
-          시작합니다.
-        </p>
-        <div class="btn-row" style="margin-top:8px;">
-          <button class="preset selected" id="calActionSpoonBtn">🥄 수저 보조</button>
-          <button class="preset" id="calActionBicepBtn">💪 이두운동</button>
-        </div>
-        <div class="safety-row" style="margin-top:8px;">
-          <label for="calHandTargetInput">손 목표 %</label>
-          <input type="number" id="calHandTargetInput" min="0" max="100" value="70" />
-          <label for="calArmTargetInput">팔꿈치 목표 %</label>
-          <input type="number" id="calArmTargetInput" min="0" max="100" value="50" />
-        </div>
-        <div class="btn-row" style="margin-top:8px;">
-          <button class="primary" id="calStartBtn">▶ 개인화 측정 시작</button>
-        </div>
-        <div class="state-line" style="margin-top:8px;">상태: <b id="calStatusText">대기 중</b></div>
-        <p class="hint" id="calResultText" style="margin-top:4px;">아직 측정된 값이 없습니다.</p>
-      </div>
-
-      <div class="sub-section">
         <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">💪 이두운동 <span class="badge-note">목표 % 자동 세팅</span></div>
         <p class="hint" style="margin-top:4px;">
           <b>손 목표 %</b>로 먼저 쥔 채 유지하고, 그 상태에서 <b>팔꿈치가 "굽힘 목표 %"까지 올라갔다가
@@ -551,7 +524,6 @@
           <input type="number" id="bicepRepsInput" min="1" max="100" value="5" />
           <button class="primary" id="bicepSaveBtn">저장</button>
         </div>
-        <p class="hint" id="bicepSeedText" style="margin-top:8px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
       </div>
 
       <div class="sub-section">
@@ -569,7 +541,6 @@
           <input type="number" id="spoonLiftElbowTargetInput" min="0" max="100" value="50" />
           <button class="primary" id="spoonLiftSaveBtn">저장</button>
         </div>
-        <p class="hint" id="spoonLiftSeedText" style="margin-top:8px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
       </div>
 
       <div class="sub-section">
