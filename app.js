@@ -528,6 +528,7 @@ const memberIdInput = document.getElementById("memberIdInput");
 const memberNameInput = document.getElementById("memberNameInput");
 const memberLoadBtn = document.getElementById("memberLoadBtn");
 const memberRegisterBtn = document.getElementById("memberRegisterBtn");
+const memberSaveBtn = document.getElementById("memberSaveBtn");
 const memberWelcomeText = document.getElementById("memberWelcomeText");
 const voiceCommandBtn = document.getElementById("voiceCommandBtn");
 const voiceCommandStatusText = document.getElementById("voiceCommandStatusText");
@@ -716,7 +717,11 @@ memberLoadBtn.addEventListener("click", loadMember);
 memberIdInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") loadMember();
 });
-memberRegisterBtn.addEventListener("click", registerMember);
+memberRegisterBtn.addEventListener("click", () => registerMember(memberRegisterBtn));
+// "저장" 버튼 -- registerMember()는 원래도 새 회원 등록/기존 회원 갱신을 둘 다
+// 처리하는 upsert라, 완전히 같은 동작을 좀 더 직관적인 이름으로 한 번 더
+// 눌러줄 수 있게 옆에 추가한 것뿐이다(별도 로직 없음).
+memberSaveBtn.addEventListener("click", () => registerMember(memberSaveBtn));
 voiceCommandBtn.addEventListener("click", toggleVoiceCommand);
 
 calActionSpoonBtn.addEventListener("click", () => selectPersonalizationCalAction("spoonLift"));
@@ -2300,7 +2305,7 @@ function loadMember() {
   updateActionSeedTexts();
 }
 
-function registerMember() {
+function registerMember(btn = memberRegisterBtn) {
   const id = memberIdInput.value.trim();
   const name = memberNameInput.value.trim();
   if (!id || !name) {
@@ -2339,8 +2344,8 @@ function registerMember() {
   memberWelcomeText.textContent = `✅ ${name}님(${id}) 등록/저장 완료 -- 지금 입력칸의 목표 %로 저장했습니다.`;
   memberWelcomeText.style.color = "var(--accent-2)";
   logControl(`👤 회원 등록/갱신: ${id} (${name})`);
-  showToast(`✅ ${name}님 등록 완료`, "ok");
-  flashButtonPress(memberRegisterBtn, "✅ 등록됨!");
+  showToast(`✅ ${name}님 저장 완료`, "ok");
+  flashButtonPress(btn, "✅ 저장됨!");
   updateActionSeedTexts();
 }
 
