@@ -2289,6 +2289,24 @@ function saveActionInputs(key, btn) {
 // 중에 이미 참조하므로, 파일 맨 위쪽 상수 선언부로 옮겨뒀다 -- 바로 위 문단
 // 설명과 같은 TDZ 문제라 여기 남겨두면 안 됨.)
 
+// "3회"처럼 숫자+단위를 그대로 speak()에 넘기면 브라우저 한국어 TTS가
+// 숫자와 단위 사이를 어색하게 끊어 읽는 경우가 있어서, "회"(한자어 계수사)
+// 앞에 오는 숫자는 한글로 직접 풀어써서 훨씬 자연스럽게 읽히게 한다
+// (일회/이회/삼회처럼). 반복 횟수 범위(1~100)만 다루면 되므로 두 자리까지만
+// 지원하고, 그 이상은 그냥 숫자 그대로 반환한다(안전한 폴백).
+const SINO_KOREAN_DIGITS = ["", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+function sinoKoreanNumber(n) {
+  n = Math.round(n);
+  if (n === 0) return "영";
+  if (n < 0 || n > 99) return String(n);
+  const tens = Math.floor(n / 10);
+  const ones = n % 10;
+  let result = "";
+  if (tens > 0) result += tens === 1 ? "십" : SINO_KOREAN_DIGITS[tens] + "십";
+  if (ones > 0) result += SINO_KOREAN_DIGITS[ones];
+  return result;
+}
+
 function speak(text) {
   try {
     if (!("speechSynthesis" in window)) return;
@@ -2471,7 +2489,7 @@ async function startBicepFromVoice(reps) {
   const clamped = Math.max(1, Math.min(100, reps));
   bicepRepsInput.value = clamped;
   voiceCommandStatusText.textContent = `✅ "이두운동 ${clamped}회" 인식 -- 시작합니다`;
-  speak(`이두운동 ${clamped}회를 시작합니다`);
+  speak(`이두운동 ${sinoKoreanNumber(clamped)}회를 시작합니다`);
   if (appMode !== "action") setAppMode("action");
   await startBicepClosedLoop();
 }
@@ -2833,7 +2851,7 @@ function bicepClosedLoopTick(state) {
     // 않고, 실제 굽힘이 목표치에 도달하거나 넘어서는 그 즉시 이완으로
     // 넘어간다 -- "수축이 목표 이상 되면 바로 이완"이라는 요청대로.
     if (armLatestPercent.actual !== null && armLatestPercent.actual >= state.elbowCurlTarget) {
-      speak(`${state.repIndex}회`);
+      speak(`${sinoKoreanNumber(state.repIndex)}회`);
       logControl(`💪 수축 완료 -- ${state.repIndex}/${state.reps}회`);
       showToast(`💪 ${state.repIndex}회 완료`, "ok", 1500);
       state.phase = "release";
