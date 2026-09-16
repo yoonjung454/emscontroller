@@ -2526,8 +2526,17 @@ async function handleVoiceTranscript(transcript) {
         voiceCommandStatusText.textContent = "🎤 이두운동 -- 몇 회 할지 말씀해주세요 (예: \"3회\")";
         return;
       }
-      // result가 null(호출 실패)이거나 "none"이면 그냥 아래로 내려가서
-      // 이름만 불렀을 때/이해 못했을 때 처리로 자연스럽게 이어진다.
+      // result === null이면(호출 자체가 실패한 것 -- Gemini 쪽 503/네트워크
+      // 오류 등, classifyVoiceIntentWithAI가 이미 logControl에 자세한 원인을
+      // 남겨둠) 화면 글자만으로는 사용자가 왜 반응이 없는지 알기 어려워서
+      // 여기서 소리로도 알려준다. result.action === "none"(AI가 정상적으로
+      // "둘 다 아니다"라고 판단한 경우)은 이런 안내 없이 조용히 아래
+      // "이해하지 못했습니다"로 자연스럽게 넘어간다.
+      if (result === null) {
+        speak("지금 잠깐 응답이 안 돼요. 다시 한 번 말씀해주세요.");
+        voiceCommandStatusText.textContent = `⚠ AI 응답 실패 -- "${transcript}"는 정해진 문구로만 다시 말씀해주세요.`;
+        return;
+      }
     }
 
     if (heardWake) {
