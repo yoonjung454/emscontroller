@@ -593,9 +593,9 @@ const toastEl = document.getElementById("toast");
 // ============================================================================
 
 let toastHideTimer = null;
-function showToast(message, kind = "ok", durationMs = 2800) {
+function showToast(message, kind = "ok", durationMs = 2800, big = false) {
   toastEl.textContent = message;
-  toastEl.className = "toast show" + (kind === "warn" ? " warn" : kind === "bad" ? " bad" : "");
+  toastEl.className = "toast show" + (kind === "warn" ? " warn" : kind === "bad" ? " bad" : "") + (big ? " big" : "");
   if (toastHideTimer) clearTimeout(toastHideTimer);
   toastHideTimer = setTimeout(() => toastEl.classList.remove("show"), durationMs);
 }
@@ -2855,7 +2855,7 @@ function bicepClosedLoopTick(state) {
     if (armLatestPercent.actual !== null && armLatestPercent.actual >= state.elbowCurlTarget) {
       speak(`${sinoKoreanNumber(state.repIndex)}회`);
       logControl(`💪 수축 완료 -- ${state.repIndex}/${state.reps}회`);
-      showToast(`💪 ${state.repIndex}회 완료`, "ok", 1500);
+      showToast(`💪 ${state.repIndex}회 완료`, "ok", 1800, true);
       state.phase = "release";
     }
   } else if (state.phase === "release") {
