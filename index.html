@@ -270,6 +270,30 @@
       </p>
     </div>
 
+    <div class="card" id="armCalCard" style="display:none;">
+      <h2>팔 초기값 측정 (펴짐 / 구부림) <span class="badge-note">팔 인식 / 행동 보조 모드에 필요</span></h2>
+      <!-- 원래 팔 인식 모드 카드 안, ③ 안전 설정보다도 뒤에 있어서 손가락 초기값
+           측정 직후 바로 이어서 하기 불편했다 -- ② 카드 바로 다음으로 옮김.
+           행동 보조 모드도 이 값이 있어야 실행되므로(actionCalibrationReady 참고)
+           팔 인식/행동 보조 두 모드에서 다 보이게 함(setAppMode 참고). -->
+      <div class="btn-row">
+        <button class="flat" id="armCalFlatBtn" disabled>① 팔 펴짐 초기값 측정</button>
+        <button class="bent" id="armCalBentBtn" disabled>② 팔 굽힘 초기값 측정</button>
+        <button class="reset" id="armResetBtn">팔 초기값 초기화</button>
+      </div>
+      <p class="hint" style="margin-top:12px;">
+        손가락 캘리브레이션과는 별개로, 팔 전용 초기값이 하나 더 필요합니다. <b>양팔</b>을
+        동시에 <b>쫙 편 상태</b>로 유지하고 ①, <b>양팔 팔꿈치를 동시에 최대한 구부린 상태</b>로
+        유지하고 ②를 눌러주세요 (30프레임 평균). 왼팔/오른팔을 각각 따로 보정하기 때문에,
+        카메라 각도나 팔 길이 차이로 같은 각도인데 한쪽 %가 더 낮게/높게 나오는 문제가 없습니다.
+      </p>
+      <p class="hint" style="margin-top:8px;">
+        ⚠️ 카메라가 어깨까지 보이도록 뒤로 물러나거나 화각을 넓혀야 합니다 (손가락 인식 때보다 더
+        넓은 화면이 필요합니다). 손 굽힘 %가 "-"로 나오면 위 ② 초기값 측정(손가락 캘리브레이션)이
+        아직 안 된 것입니다.
+      </p>
+    </div>
+
     <div class="card">
       <h2>③ 안전 설정 &amp; Arduino 연결 <span class="badge-note">기본은 시뮬레이션(연결 없이도 동작)</span></h2>
 
@@ -491,7 +515,7 @@
           전류값을 직접 입력하지 않습니다 -- <b>손을 몇 % 굽혀서 쥘지</b>, <b>팔꿈치를 몇 % 굽혀서
           들지</b>만 정하면, 카메라로 실시간 측정하면서 <b>그 사람에게 맞는 세기를 자동으로 찾아
           도달·유지</b>합니다 (팔 인식 모드와 같은 원리 -- 채널1=손, 채널2=팔꿈치). 시작 전에
-          <b>② 초기값 측정(손)</b>과 <b>팔 인식 모드의 팔 초기값 측정</b>을 먼저 한 번씩 해두세요.
+          <b>② 초기값 측정(손)</b>과 <b>팔 초기값 측정</b>을 먼저 한 번씩 해두세요.
         </p>
         <div class="safety-row">
           <label for="spoonLiftHandTargetInput">손 목표 %</label>
@@ -637,27 +661,11 @@
         </div>
       </div>
 
-      <div class="sub-section">
-        <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text);">
-          팔 초기값 측정 (펴짐 / 구부림)
-        </div>
-        <p class="hint" style="margin-top:4px;">
-          손가락 캘리브레이션과는 별개로, 팔 전용 초기값이 하나 더 필요합니다. <b>양팔</b>을
-          동시에 <b>쫙 편 상태</b>로 유지하고 ①, <b>양팔 팔꿈치를 동시에 최대한 구부린 상태</b>로
-          유지하고 ②를 눌러주세요 (30프레임 평균). 왼팔/오른팔을 각각 따로 보정하기 때문에,
-          카메라 각도나 팔 길이 차이로 같은 각도인데 한쪽 %가 더 낮게/높게 나오는 문제가 없습니다.
-        </p>
-        <div class="btn-row" style="margin-top:8px;">
-          <button class="flat" id="armCalFlatBtn" disabled>① 팔 펴짐 초기값 측정</button>
-          <button class="bent" id="armCalBentBtn" disabled>② 팔 굽힘 초기값 측정</button>
-          <button class="reset" id="armResetBtn">팔 초기값 초기화</button>
-        </div>
-      </div>
-
       <p class="hint" style="margin-top:8px;">
-        ⚠️ 카메라가 어깨까지 보이도록 뒤로 물러나거나 화각을 넓혀야 합니다 (손가락 인식 때보다 더
-        넓은 화면이 필요합니다). 손 굽힘 %가 "-"로 나오면 ② 초기값 측정(손가락 캘리브레이션)이
-        아직 안 된 것입니다.
+        ⚠️ 팔 전용 초기값(펴짐/구부림) 측정은 이제 위쪽 <b>"팔 초기값 측정"</b> 카드(② 카드
+        바로 다음)로 옮겨졌습니다 -- 손가락 초기값 측정 직후 이어서 하기 편하도록. 카메라가
+        어깨까지 보이도록 뒤로 물러나거나 화각을 넓혀야 합니다. 손 굽힘 %가 "-"로 나오면 그
+        카드에서 측정이 아직 안 된 것입니다.
       </p>
     </div>
 

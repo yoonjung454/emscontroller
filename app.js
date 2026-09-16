@@ -483,6 +483,7 @@ const modeDescriptionText = document.getElementById("modeDescriptionText");
 const mirrorModeCard = document.getElementById("mirrorModeCard");
 const actionModeCard = document.getElementById("actionModeCard");
 const armModeCard = document.getElementById("armModeCard");
+const armCalCard = document.getElementById("armCalCard");
 const testModeCard = document.getElementById("testModeCard");
 
 const actionButtonsRow = document.getElementById("actionButtonsRow");
@@ -2235,6 +2236,10 @@ function setAppMode(mode) {
   actionModeCard.style.display = mode === "action" ? "" : "none";
   armModeCard.style.display = mode === "arm" ? "" : "none";
   testModeCard.style.display = mode === "test" ? "" : "none";
+  // 팔 초기값 측정 카드는 ② 카드 바로 다음(③ 안전 설정보다 앞)으로 옮겨졌다 --
+  // 팔 인식 모드뿐 아니라 행동 보조 모드도 이 값이 필요하므로(actionCalibrationReady)
+  // 두 모드 모두에서 보이게 한다.
+  armCalCard.style.display = (mode === "arm" || mode === "action") ? "" : "none";
   modeMirrorBtn.classList.toggle("selected", mode === "mirror");
   modeActionBtn.classList.toggle("selected", mode === "action");
   modeArmBtn.classList.toggle("selected", mode === "arm");
