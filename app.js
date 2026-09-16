@@ -2191,6 +2191,16 @@ function setAppMode(mode) {
     resetStartControlButton();
   }
   forceZeroController("모드 전환");
+  // ⚠ 버그 수정: forceZeroController가 정리 목적으로 controlState를 항상
+  // "SAFETY_STOP"("안전 정지 상태")로 남겨두는데, 거울/팔인식/행동보조 모드는
+  // 다음 tick에서 자기 상태로 바로 덮어써서 문제가 안 되지만, 테스트 모드는
+  // controlState를 아예 안 건드리는 모드라 이 값이 그대로 남아 "안전 정지
+  // 상태"가 계속 표시됐다(실제로 안전장치가 없는 모드인데도). 테스트 모드로
+  // 들어갈 땐 이 표시를 정상(대기중)으로 바로 되돌린다.
+  if (mode === "test") controlState = "STANDBY";
+  // 카메라가 꺼져 있으면(테스트 모드는 카메라 없이도 쓰는 게 정상) processResult()가
+  // 안 돌아서 위에서 바꾼 controlState가 화면 글자에 반영이 안 되므로 직접 갱신.
+  controlStateText.textContent = STATE_LABELS[controlState] || controlState;
   if (serialLink) serialLink.stopAll().catch(() => {});
   armedCh1 = false;
   armedCh2 = false;
@@ -2229,6 +2239,7 @@ function setAppMode(mode) {
   }
 
   logControl(`모드 전환: ${mode === "mirror" ? "거울 모드" : mode === "action" ? "행동 보조 모드" : mode === "arm" ? "팔 인식 모드" : "테스트 모드"}`);
+  updateSafetyTripUi(); // 테스트 모드 진입/이탈에 따라 안전 정지 배너 표시 여부를 다시 맞춤
 }
 
 // ============================================================================
@@ -3120,7 +3131,11 @@ function resetAfterTrip() {
 // safetyTripped 체크 참고). 예전엔 이 상태가 화면 어디에도 안 보여서 "왜 자꾸 꺼지지?"의
 // 원인을 알 방법이 없었다 -- 지금은 ③ 카드 맨 위에 이유와 해제 버튼을 보여준다.
 function updateSafetyTripUi() {
-  if (safetyTripped) {
+  // 테스트 모드는 안전장치 자체가 없는 모드라(요청에 따라 의도적으로 뺌),
+  // 다른 모드에서 트립된 게 남아있어도 이 배너는 테스트 모드에서만큼은
+  // 띄우지 않는다 -- 실제로 testModeKeyDown/sendTestPulse는 safetyTripped를
+  // 전혀 참조하지 않으므로 표시만 안 맞았던 것.
+  if (safetyTripped && appMode !== "test") {
     safetyTripRow.style.display = "";
     safetyTripHint.style.display = "";
     safetyTripReasonText.textContent = `원인: ${safetyTripReason}`;
