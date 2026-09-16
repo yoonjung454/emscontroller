@@ -2882,7 +2882,9 @@ function bicepClosedLoopTick(state) {
     stepFlexOnlyAxis(actionElbowCtrl, state.elbowReleaseTarget, armLatestPercent.actual, now);
     elbowTargetNow = state.elbowReleaseTarget;
     phaseLabel = `${state.repIndex}/${state.reps}회차 -- 팔꿈치 이완 중 (목표 ${state.elbowReleaseTarget}%)`;
-    if (actionElbowCtrl.state === "LOCKED") {
+    // 굽힘 쪽과 똑같이, LOCKED를 기다리지 않고 실제 이완 %가 목표치에
+    // 도달하거나 그 이하가 되는 즉시 다음 단계로 넘어간다.
+    if (armLatestPercent.actual !== null && armLatestPercent.actual <= state.elbowReleaseTarget) {
       if (state.repIndex >= state.reps) {
         stopActionMode(`이두운동 ${state.reps}회 완료`);
         return;
