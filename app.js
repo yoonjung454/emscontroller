@@ -2770,7 +2770,7 @@ function spoonLiftTick(state) {
 // 바로 다음 단계로 넘어간다. 굽힘 유지 시간(BICEP_CURL_HOLD_MS)만 고정값으로
 // 남겨뒀다 (예전 BICEP_CH2_HOLD_MS와 같은 개념 -- "도달 후 잠깐 버티기").
 // ============================================================================
-const BICEP_CURL_HOLD_MS = 1000;
+const BICEP_CURL_HOLD_MS = 500;
 
 async function startBicepClosedLoop() {
   const key = "bicep";
