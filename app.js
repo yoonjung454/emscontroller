@@ -2413,26 +2413,31 @@ async function classifyVoiceIntentWithAI(transcript) {
   if (!aiConfig.apiKey) return null;
 
   const systemPrompt = `당신은 재활 보조 기기의 음성 비서 "탱글이"입니다. 이 기기는 딱 두 가지
-동작만 할 수 있습니다.
+전기자극 동작을 실행할 수 있습니다.
 1) 수저 들기 보조(spoon_lift) -- 손과 팔꿈치를 굽혀서 숟가락을 들어올려 밥/음식을 먹는 걸
    돕는 동작. "배고프다", "뭔가 먹고 싶다", "밥 먹여달라" 같은 표현은 전부 여기 해당합니다.
 2) 이두운동(bicep) -- 팔꿈치를 굽혔다 펴는 걸 반복하는 운동. "운동하고 싶다", "팔 좀
    움직이고 싶다", "이두 운동" 같은 표현이 해당합니다.
 
-사용자의 한국어 발화를 보고 반드시 아래 JSON 중 하나만 출력하세요 (설명/코드블록 금지):
-{"action":"spoon_lift","message":"<한 줄 설명>"}
-{"action":"bicep","message":"<한 줄 설명>"}
-{"action":"none","message":"<위 둘 다 아닌 이유>"}
+이 둘 중 하나가 아닌 발화는, 전기자극과 무관하게 그냥 평소 대화형 AI 비서처럼 자연스럽게
+대답해주면 됩니다(저녁 메뉴 추천, 잡담, 일반 상식 질문 등 뭐든 좋습니다) -- 실제로 전기
+자극을 실행하지는 않고, 말로만 대답합니다.
 
-명확히 위 두 동작과 무관한 잡담(날씨, 인사 등)일 때만 none으로 처리하세요.`;
+사용자의 한국어 발화를 보고 반드시 아래 JSON 중 하나만 출력하세요 (설명/코드블록 금지):
+{"action":"spoon_lift","message":"<한 줄 설명>","reply":""}
+{"action":"bicep","message":"<한 줄 설명>","reply":""}
+{"action":"chat","message":"일반 대화로 처리","reply":"<사용자에게 그대로 소리 내어 읽어줄 한국어 대답, 음성으로 자연스럽게 들리게 2~3문장 이내로 간결하게>"}
+
+reply는 action이 "chat"일 때만 채우고, spoon_lift/bicep일 때는 빈 문자열로 두세요.`;
 
   const responseSchema = {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["spoon_lift", "bicep", "none"] },
-      message: { type: "string" }
+      action: { type: "string", enum: ["spoon_lift", "bicep", "chat"] },
+      message: { type: "string" },
+      reply: { type: "string" }
     },
-    required: ["action", "message"]
+    required: ["action", "message", "reply"]
   };
 
   try {
@@ -2447,7 +2452,7 @@ async function classifyVoiceIntentWithAI(transcript) {
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: transcript }] }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: { responseMimeType: "application/json", responseSchema, maxOutputTokens: 200 }
+        generationConfig: { responseMimeType: "application/json", responseSchema, maxOutputTokens: 400 }
       })
     });
 
@@ -2546,12 +2551,18 @@ async function handleVoiceTranscript(transcript) {
         voiceCommandStatusText.textContent = "🎤 이두운동 -- 몇 회 할지 말씀해주세요 (예: \"3회\")";
         return;
       }
+      if (result?.action === "chat" && result.reply) {
+        // 전기자극 동작(수저/이두)이 아닌 그 외 모든 말은 그냥 평소 대화형
+        // AI처럼 대답만 해준다 -- 아무것도 설정/실행하지 않음.
+        speak(result.reply);
+        voiceCommandStatusText.textContent = `💬 "${transcript}" → ${result.reply}`;
+        voiceAwakeUntil = performance.now() + VOICE_AWAKE_WINDOW_MS; // 대화가 이어질 수 있게 깨어있는 시간 연장
+        return;
+      }
       // result === null이면(호출 자체가 실패한 것 -- Gemini 쪽 503/네트워크
       // 오류 등, classifyVoiceIntentWithAI가 이미 logControl에 자세한 원인을
       // 남겨둠) 화면 글자만으로는 사용자가 왜 반응이 없는지 알기 어려워서
-      // 여기서 소리로도 알려준다. result.action === "none"(AI가 정상적으로
-      // "둘 다 아니다"라고 판단한 경우)은 이런 안내 없이 조용히 아래
-      // "이해하지 못했습니다"로 자연스럽게 넘어간다.
+      // 여기서 소리로도 알려준다.
       if (result === null) {
         speak("지금 잠깐 응답이 안 돼요. 다시 한 번 말씀해주세요.");
         voiceCommandStatusText.textContent = `⚠ AI 응답 실패 -- "${transcript}"는 정해진 문구로만 다시 말씀해주세요.`;
