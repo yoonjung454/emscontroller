@@ -503,6 +503,9 @@ const spoonLiftSaveBtn = document.getElementById("spoonLiftSaveBtn");
 const bicepSaveBtn = document.getElementById("bicepSaveBtn");
 const voiceCommandBtn = document.getElementById("voiceCommandBtn");
 const voiceCommandStatusText = document.getElementById("voiceCommandStatusText");
+const voiceListenIndicator = document.getElementById("voiceListenIndicator");
+const voiceListenIndicatorText = document.getElementById("voiceListenIndicatorText");
+const voiceAiApiKeyInput = document.getElementById("voiceAiApiKeyInput");
 
 // 개인화 측정 (목표 도달 세기 자동 탐색)
 const calActionSpoonBtn = document.getElementById("calActionSpoonBtn");
@@ -629,6 +632,15 @@ initVoiceCommand();
 initSafetyUi();
 initPresetLabels();
 applyStoredActionSettings(); // 저장된 수저 들기 보조/이두운동 설정을 페이지 열자마자 채움
+
+// 음성 비서 "탱글이" -- 마이크 버튼을 누르지 않아도 페이지를 열면 바로 항상
+// 듣는 상태가 되게 자동으로 켠다(버튼은 끄고 싶을 때 쓰는 용도로 남겨둠).
+// 브라우저가 마이크 권한을 아직 안 물어봤으면 여기서 권한 팝업이 뜬다.
+if (SpeechRecognitionCtor) toggleVoiceCommand();
+// "탱글아"로 깨어난 뒤 10초가 지나면 오른쪽 위 표시가 저절로 "듣고 있음"으로
+// 돌아와야 하는데, 새로 말을 걸지 않으면 그 갱신을 트리거할 이벤트가 없어서
+// 주기적으로(0.5초마다) 다시 그려준다.
+setInterval(updateVoiceIndicator, 500);
 // AI 명령 해석(Gemini) UI는 예전 거울 모드 카드와 함께 제거됨 -- 아래 3줄과
 // updateAiUi() 호출 비활성화 (관련 함수/설정 로드-저장 로직은 그대로 남아있음)
 // aiEnabledCheckbox.checked = aiConfig.enabled;
@@ -690,6 +702,12 @@ bicepBtn.addEventListener("click", () => startBicepClosedLoop());
 spoonLiftSaveBtn.addEventListener("click", () => saveActionInputs("spoonLift", spoonLiftSaveBtn));
 bicepSaveBtn.addEventListener("click", () => saveActionInputs("bicep", bicepSaveBtn));
 voiceCommandBtn.addEventListener("click", toggleVoiceCommand);
+voiceAiApiKeyInput.value = aiConfig.apiKey;
+voiceAiApiKeyInput.addEventListener("change", () => {
+  aiConfig.apiKey = voiceAiApiKeyInput.value.trim();
+  saveAiConfig();
+  logControl(aiConfig.apiKey ? "🤖 음성 비서 AI API 키 저장됨" : "🤖 음성 비서 AI API 키 비움 -- 정해진 문구만 인식");
+});
 
 calActionSpoonBtn.addEventListener("click", () => selectPersonalizationCalAction("spoonLift"));
 calActionBicepBtn.addEventListener("click", () => selectPersonalizationCalAction("bicep"));
@@ -2360,6 +2378,75 @@ function matchesSpoonLiftPhrase(text) {
   return ["수저", "숟가락", "밥먹고싶", "밥먹는거", "밥먹여줘"].some((kw) => text.includes(kw));
 }
 
+// 위 키워드 매칭으로 못 잡은(정해진 문구가 아닌) 발화를 AI(Gemini)에게 보내
+// "수저 들기 보조/이두운동/둘 다 아님" 중 뭘 원하는지 판단시킨다. API 키가
+// 없으면 아예 호출하지 않고 null을 반환 -- 호출자는 이 경우 그냥 "이해 못함"
+// 으로 처리한다. interpretCommandWithAI()(옛 거울 모드 명령 해석)와 같은
+// Gemini 호출 패턴(REST 직접 호출 + responseSchema로 JSON 강제)을 재사용.
+async function classifyVoiceIntentWithAI(transcript) {
+  if (!aiConfig.apiKey) return null;
+
+  const systemPrompt = `당신은 재활 보조 기기의 음성 비서 "탱글이"입니다. 이 기기는 딱 두 가지
+동작만 할 수 있습니다.
+1) 수저 들기 보조(spoon_lift) -- 손과 팔꿈치를 굽혀서 숟가락을 들어올려 밥/음식을 먹는 걸
+   돕는 동작. "배고프다", "뭔가 먹고 싶다", "밥 먹여달라" 같은 표현은 전부 여기 해당합니다.
+2) 이두운동(bicep) -- 팔꿈치를 굽혔다 펴는 걸 반복하는 운동. "운동하고 싶다", "팔 좀
+   움직이고 싶다", "이두 운동" 같은 표현이 해당합니다.
+
+사용자의 한국어 발화를 보고 반드시 아래 JSON 중 하나만 출력하세요 (설명/코드블록 금지):
+{"action":"spoon_lift","message":"<한 줄 설명>"}
+{"action":"bicep","message":"<한 줄 설명>"}
+{"action":"none","message":"<위 둘 다 아닌 이유>"}
+
+명확히 위 두 동작과 무관한 잡담(날씨, 인사 등)일 때만 none으로 처리하세요.`;
+
+  const responseSchema = {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["spoon_lift", "bicep", "none"] },
+      message: { type: "string" }
+    },
+    required: ["action", "message"]
+  };
+
+  try {
+    const model = aiConfig.model || "gemini-3.7-flash";
+    const url =
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent` +
+      `?key=${encodeURIComponent(aiConfig.apiKey)}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: transcript }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { responseMimeType: "application/json", responseSchema, maxOutputTokens: 200 }
+      })
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => "");
+      logControl(`⚠ 음성 비서 AI 호출 실패 (HTTP ${response.status}): ${errBody.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!raw) {
+      logControl(`⚠ 음성 비서 AI 응답에 텍스트가 없음(${data.candidates?.[0]?.finishReason || "unknown"})`);
+      return null;
+    }
+    const jsonText = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    const parsed = JSON.parse(jsonText);
+    logControl(`🤖 음성 비서 AI 응답: ${jsonText}`);
+    return parsed;
+  } catch (err) {
+    logControl(`⚠ 음성 비서 AI 해석 오류: ${err.message}`);
+    return null;
+  }
+}
+
 async function startSpoonLiftFromVoice() {
   voiceCommandStatusText.textContent = "✅ \"수저 들기 보조\" 인식 -- 시작합니다";
   speak("수저 들기 보조를 시작합니다");
@@ -2376,48 +2463,77 @@ async function startBicepFromVoice(reps) {
   await startBicepClosedLoop();
 }
 
-function handleVoiceTranscript(transcript) {
-  const text = transcript.replace(/\s+/g, ""); // 띄어써도 인식되게 공백 제거하고 비교
-  const now = performance.now();
-  const heardWake = isWakeWord(text);
-  if (heardWake) voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS;
-  const awake = now < voiceAwakeUntil;
+async function handleVoiceTranscript(transcript) {
+  // try/finally로 감싸서, 아래 어느 return 경로로 빠지든 오른쪽 위 표시(듣고
+  // 있음/깨어있음)가 이번에 바뀐 상태를 바로 반영하게 한다.
+  try {
+    const text = transcript.replace(/\s+/g, ""); // 띄어써도 인식되게 공백 제거하고 비교
+    const now = performance.now();
+    const heardWake = isWakeWord(text);
+    if (heardWake) voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS;
+    const awake = now < voiceAwakeUntil;
 
-  // ---- 이두운동 반복 횟수를 되묻은 직후라면, 이번 발화는 그 대답으로 취급 ----
-  if (voicePendingBicepReps) {
-    if (!awake) { voicePendingBicepReps = false; return; } // 너무 오래 걸림 -- 처음부터(이름부터) 다시
-    const reps = parseSpokenNumber(text);
-    if (reps === null) {
-      voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS; // 계속 들을 시간을 연장
-      speak("몇 회인지 다시 말씀해주세요");
-      voiceCommandStatusText.textContent = `❓ "${transcript}"에서 횟수를 못 찾았습니다 -- 숫자로 다시 말씀해주세요.`;
+    // ---- 이두운동 반복 횟수를 되묻은 직후라면, 이번 발화는 그 대답으로 취급 ----
+    if (voicePendingBicepReps) {
+      if (!awake) { voicePendingBicepReps = false; return; } // 너무 오래 걸림 -- 처음부터(이름부터) 다시
+      const reps = parseSpokenNumber(text);
+      if (reps === null) {
+        voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS; // 계속 들을 시간을 연장
+        speak("몇 회인지 다시 말씀해주세요");
+        voiceCommandStatusText.textContent = `❓ "${transcript}"에서 횟수를 못 찾았습니다 -- 숫자로 다시 말씀해주세요.`;
+        return;
+      }
+      voicePendingBicepReps = false;
+      startBicepFromVoice(reps);
       return;
     }
-    voicePendingBicepReps = false;
-    startBicepFromVoice(reps);
-    return;
-  }
 
-  if (!awake) return; // 이름도 안 불렀고, 부른 지 오래 지남 -- 그냥 지나가는 대화로 보고 무시
+    if (!awake) return; // 이름도 안 불렀고, 부른 지 오래 지남 -- 그냥 지나가는 대화로 보고 무시
 
-  if (matchesSpoonLiftPhrase(text)) {
-    startSpoonLiftFromVoice();
-    return;
+    if (matchesSpoonLiftPhrase(text)) {
+      startSpoonLiftFromVoice();
+      return;
+    }
+    if (text.includes("이두")) {
+      voicePendingBicepReps = true;
+      voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS;
+      speak("몇 회 하시겠어요?");
+      voiceCommandStatusText.textContent = "🎤 이두운동 -- 몇 회 할지 말씀해주세요 (예: \"3회\")";
+      return;
+    }
+
+    // ---- 정해진 문구로 못 잡았을 때만 AI에게 넘긴다 (API 키가 있을 때만) ----
+    // 이름만 부르고 아무 내용도 없는 경우("탱글아"만)는 AI를 부를 필요가
+    // 없어서, 이름을 뗀 나머지 글자가 어느 정도 있을 때만 호출한다.
+    const withoutWake = text.replace(/탱그라|탱글아|탱글이|탱글/g, "");
+    if (aiConfig.apiKey && withoutWake.length >= 2) {
+      voiceCommandStatusText.textContent = `🤖 "${transcript}" 이해하는 중...`;
+      const result = await classifyVoiceIntentWithAI(transcript);
+      if (result?.action === "spoon_lift") {
+        startSpoonLiftFromVoice();
+        return;
+      }
+      if (result?.action === "bicep") {
+        voicePendingBicepReps = true;
+        voiceAwakeUntil = performance.now() + VOICE_AWAKE_WINDOW_MS;
+        speak("몇 회 하시겠어요?");
+        voiceCommandStatusText.textContent = "🎤 이두운동 -- 몇 회 할지 말씀해주세요 (예: \"3회\")";
+        return;
+      }
+      // result가 null(호출 실패)이거나 "none"이면 그냥 아래로 내려가서
+      // 이름만 불렀을 때/이해 못했을 때 처리로 자연스럽게 이어진다.
+    }
+
+    if (heardWake) {
+      // 이름만 부르고 아직 다른 명령은 없었음 -- 인사만 하고 다음 말을 기다림
+      speak("네");
+      voiceCommandStatusText.textContent = "✅ 네! 명령을 말씀해주세요 (예: \"수저들기 보조해줘\", \"이두운동해줘\")";
+      return;
+    }
+    voiceCommandStatusText.textContent = `❓ "${transcript}" -- 이해하지 못했습니다.`;
+  } finally {
+    updateVoiceIndicator();
   }
-  if (text.includes("이두")) {
-    voicePendingBicepReps = true;
-    voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS;
-    speak("몇 회 하시겠어요?");
-    voiceCommandStatusText.textContent = "🎤 이두운동 -- 몇 회 할지 말씀해주세요 (예: \"3회\")";
-    return;
-  }
-  if (heardWake) {
-    // 이름만 부르고 아직 다른 명령은 없었음 -- 인사만 하고 다음 말을 기다림
-    speak("네");
-    voiceCommandStatusText.textContent = "✅ 네! 명령을 말씀해주세요 (예: \"수저들기 보조해줘\", \"이두운동해줘\")";
-    return;
-  }
-  voiceCommandStatusText.textContent = `❓ "${transcript}" -- 이해하지 못했습니다.`;
 }
 
 function toggleVoiceCommand() {
@@ -2435,6 +2551,31 @@ function toggleVoiceCommand() {
     voiceAwakeUntil = 0;
     voicePendingBicepReps = false;
     try { voiceRecognition.stop(); } catch (e) { /* 이미 멈춘 상태 등 방어 */ }
+  }
+  updateVoiceIndicator();
+}
+
+// 화면 오른쪽 위에 항상 떠 있는 작은 표시 -- 지금 마이크가 듣고 있는지,
+// "탱글아"를 불러서 깨어있는(명령을 받는) 상태인지 한눈에 보여준다. 어느
+// 모드/카드에 있든 항상 같은 자리에 보이게 body 바로 아래 고정 배치했다.
+// awake 상태는 10초 뒤 저절로 풀리는데, 그 사이 새로 말을 안 해도 표시가
+// 제때 "듣고 있음"으로 돌아오도록 아래 setInterval에서 주기적으로도 갱신한다.
+function updateVoiceIndicator() {
+  if (!voiceEnabled) {
+    voiceListenIndicator.style.display = "none";
+    return;
+  }
+  voiceListenIndicator.style.display = "flex";
+  const awake = performance.now() < voiceAwakeUntil;
+  if (voicePendingBicepReps) {
+    voiceListenIndicator.className = "voice-listen-indicator awake";
+    voiceListenIndicatorText.textContent = "🎤 몇 회인지 대답해주세요";
+  } else if (awake) {
+    voiceListenIndicator.className = "voice-listen-indicator awake";
+    voiceListenIndicatorText.textContent = "🎤 탱글이가 듣고 있어요 (명령하세요)";
+  } else {
+    voiceListenIndicator.className = "voice-listen-indicator listening";
+    voiceListenIndicatorText.textContent = "🎤 듣고 있음 (\"탱글아\" 불러보세요)";
   }
 }
 
