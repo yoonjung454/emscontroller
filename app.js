@@ -2818,6 +2818,11 @@ function bicepClosedLoopTick(state) {
     stepFlexOnlyAxis(actionElbowCtrl, state.elbowCurlTarget, armLatestPercent.actual, now);
     phaseLabel = `${state.repIndex}/${state.reps}회차 -- 팔꿈치 굽히는 중 (목표 ${state.elbowCurlTarget}%)`;
     if (actionElbowCtrl.state === "LOCKED") {
+      // 수축(굽힘) 완료 = 1회로 센다 -- 유지/이완까지 기다리지 않고 굽힘
+      // 목표에 도달하는 그 순간 바로 횟수를 세고 소리로 알려준다.
+      speak(`${state.repIndex}회`);
+      logControl(`💪 수축 완료 -- ${state.repIndex}/${state.reps}회`);
+      showToast(`💪 ${state.repIndex}회 완료`, "ok", 1500);
       state.phase = "hold";
       state.holdStartedAt = now;
     }
