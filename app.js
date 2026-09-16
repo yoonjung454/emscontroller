@@ -184,7 +184,6 @@ const DEFAULT_CONFIG = {
     // 가정용 저전류 기기라는 전제로 10초 -> 60초로 늘림 (③ 안전 설정 카드에서
     // 언제든 사람이 더 조정 가능).
     maxContinuousStimSeconds: 60,
-    totalExperimentSeconds: 300,
     cooldownSeconds: 5
   },
   serial: { baudRate: 19200 }
@@ -385,7 +384,7 @@ let holdLocked = false;
 const liveModeRequested = true;
 let safetyTripped = false;
 let safetyTripReason = "";
-let experimentStart = null;
+let sessionStartedAt = null; // 카메라를 처음 켠 시각 -- "경과 시간" 표시용일 뿐, 강제 정지 안 함
 let continuousStimStart = null;
 let cooldownUntil = null;
 let armedCh1 = false;
@@ -509,9 +508,6 @@ const voiceListenIndicatorText = document.getElementById("voiceListenIndicatorTe
 const voiceAiApiKeyInput = document.getElementById("voiceAiApiKeyInput");
 
 const maxContinuousInput = document.getElementById("maxContinuousInput");
-const totalExperimentInput = document.getElementById("totalExperimentInput");
-const resetExperimentTimerBtn = document.getElementById("resetExperimentTimerBtn");
-const experimentTimerPill = document.getElementById("experimentTimerPill");
 const holdBehaviorHint = document.getElementById("holdBehaviorHint");
 
 // const captureBtn = document.getElementById("captureBtn");
@@ -721,18 +717,6 @@ maxContinuousInput.addEventListener("change", () => {
   saveConfig();
 });
 
-totalExperimentInput.addEventListener("change", () => {
-  config.safety.totalExperimentSeconds = Math.max(10, Math.min(36000, Number(totalExperimentInput.value) || 300));
-  totalExperimentInput.value = config.safety.totalExperimentSeconds;
-  saveConfig();
-});
-resetExperimentTimerBtn.addEventListener("click", () => {
-  // "켜자마자 바로 꺼짐" 증상의 흔한 원인 -- 카메라를 맨 처음 켠 시점부터 세는
-  // 전체 실험 타이머가 이미 다 찬 경우. 지금부터 다시 세도록 리셋한다.
-  experimentStart = performance.now();
-  logControl("⏱ 전체 실험 타이머를 초기화했습니다");
-  showToast("⏱ 실험 타이머 초기화됨", "ok");
-});
 
 clearSafetyTripBtn.addEventListener("click", () => {
   const hadReason = safetyTripReason;
@@ -962,7 +946,6 @@ function updateAiUi() {
 function initSafetyUi() {
   safetyMaxInput.value = config.safety.maxIntensity;
   maxContinuousInput.value = config.safety.maxContinuousStimSeconds;
-  totalExperimentInput.value = config.safety.totalExperimentSeconds;
   updateSafetyPill();
   updateSafetyTripUi();
 }
@@ -1161,7 +1144,7 @@ async function startRun() {
     canvas.height = video.videoHeight || 480;
 
     isRunning = true;
-    experimentStart = experimentStart ?? performance.now();
+    sessionStartedAt = sessionStartedAt ?? performance.now();
     runBtn.textContent = "정지";
     runBtn.classList.add("running");
     calFlatBtn.disabled = false;
@@ -2718,7 +2701,6 @@ function spoonLiftTick(state) {
   const allowed = liveOutputAllowedByConfig();
   if (!allowed.ok) { stopActionMode(allowed.reason); return; }
   if (continuousStimExceeded()) { stopActionMode("최대 연속 자극 시간을 초과했습니다"); return; }
-  if (totalTimeExceeded()) { stopActionMode("전체 실험 제한시간을 초과했습니다"); return; }
 
   const now = performance.now();
   const handAverage = computeAverage(latestPercent.actual);
@@ -2811,7 +2793,6 @@ function bicepClosedLoopTick(state) {
   const allowed = liveOutputAllowedByConfig();
   if (!allowed.ok) { stopActionMode(allowed.reason); return; }
   if (continuousStimExceeded()) { stopActionMode("최대 연속 자극 시간을 초과했습니다"); return; }
-  if (totalTimeExceeded()) { stopActionMode("전체 실험 제한시간을 초과했습니다"); return; }
 
   const now = performance.now();
   const handAverage = computeAverage(latestPercent.actual);
@@ -3119,7 +3100,6 @@ function runtimeCheck(handLost) {
   if (!liveModeRequested) return { ok: true };
   if (!serialLink || !serialLink.isConnected()) return { ok: false, reason: "시리얼 연결이 끊어졌습니다." };
   if (continuousStimExceeded()) return { ok: false, reason: "최대 연속 자극 시간을 초과했습니다." };
-  if (totalTimeExceeded()) return { ok: false, reason: "전체 실험 제한시간을 초과했습니다." };
   return { ok: true };
 }
 
@@ -3177,10 +3157,6 @@ function notifyStimStopped() {
 function continuousStimExceeded() {
   if (continuousStimStart === null) return false;
   return (performance.now() - continuousStimStart) / 1000 > config.safety.maxContinuousStimSeconds;
-}
-function totalTimeExceeded() {
-  if (experimentStart === null) return false;
-  return (performance.now() - experimentStart) / 1000 > config.safety.totalExperimentSeconds;
 }
 function startCooldown() {
   cooldownUntil = performance.now() + config.safety.cooldownSeconds * 1000;
@@ -3927,26 +3903,16 @@ function updateCompareDisplay() {
   }
 }
 
+// ⚠ 요청에 따라 "전체 실험 제한시간"(초과하면 모든 모드 강제 정지) 기능은
+// 없앴다 -- 이 표시는 그냥 카메라를 처음 켠 뒤 얼마나 지났는지 보여주기만
+// 하는 참고용 경과 시간이고, 아무것도 강제로 멈추지 않는다.
 function updateElapsedDisplay() {
-  if (experimentStart === null) {
+  if (sessionStartedAt === null) {
     elapsedDisplay.textContent = "0s";
-    experimentTimerPill.textContent = "타이머 시작 전";
-    experimentTimerPill.className = "pill";
     return;
   }
-  const elapsedS = (performance.now() - experimentStart) / 1000;
+  const elapsedS = (performance.now() - sessionStartedAt) / 1000;
   elapsedDisplay.textContent = `${Math.floor(elapsedS)}s`;
-  const remainingS = Math.max(0, config.safety.totalExperimentSeconds - elapsedS);
-  if (remainingS <= 0) {
-    experimentTimerPill.textContent = "0s 남음 -- 초과됨! 모든 모드 즉시 정지됨";
-    experimentTimerPill.className = "pill bad";
-  } else if (remainingS <= 30) {
-    experimentTimerPill.textContent = `${Math.ceil(remainingS)}s 남음`;
-    experimentTimerPill.className = "pill warn";
-  } else {
-    experimentTimerPill.textContent = `${Math.ceil(remainingS)}s 남음`;
-    experimentTimerPill.className = "pill";
-  }
 }
 
 function logControl(message) {
