@@ -455,31 +455,20 @@
 
       <div class="sub-section" style="margin-top:12px; padding-top:12px;">
         <div class="checkbox-row" style="margin-top:0; font-weight:600; color:var(--text); justify-content:space-between;">
-          <span>👤 회원 개인화</span>
+          <span>설정 저장</span>
           <span>
             <button id="voiceCommandBtn">🎤 음성 명령</button>
           </span>
         </div>
         <p class="hint" style="margin-top:4px;">
-          같은 목표 %라도 사람마다 필요한 세기가 달라서(더/덜 움직임), 회원번호로 그 사람에게 맞게
-          저장해둔 목표 %(/반복 횟수)와, 아래 "개인화 측정"으로 찾아둔 세기를 아래 실행 버튼에
-          자동으로 불러옵니다(실행 시 그 세기부터 시작해서 매번 0부터 다시 찾지 않음). 처음
-          등록하는 사람이면 아래 입력칸들에 값을 직접 넣은 다음 "회원 등록"을 누르세요.
+          아래 수저 들기 보조/이두운동 목표 %(/반복 횟수)는 각 섹션의 "저장" 버튼을 누르면 이
+          브라우저에 그대로 남아있다가, 다음에 페이지를 열어도 자동으로 다시 채워집니다(회원별로
+          따로 저장하지 않고, 이 컴퓨터에서 마지막으로 저장한 값 하나만 기억합니다).
         </p>
         <p class="hint" id="voiceCommandStatusText" style="margin-top:4px;">
           🎤 음성 명령: "수저들기보조" 또는 "이두운동"이라고 말하면 해당 행동을 바로 시작합니다
-          (지금 입력칸에 있는 채널값 그대로 사용). 그 외 안전 조건(연결/안전값 등)은 버튼으로 누를 때와 동일합니다.
+          (지금 입력칸에 있는 목표 % 그대로 사용). 그 외 안전 조건(연결/안전값 등)은 버튼으로 누를 때와 동일합니다.
         </p>
-        <div class="safety-row">
-          <label for="memberIdInput">회원번호</label>
-          <input type="text" id="memberIdInput" placeholder="예: 1266" style="width:100px;" />
-          <label for="memberNameInput">이름 (등록 시)</label>
-          <input type="text" id="memberNameInput" placeholder="예: 홍서준" style="width:100px;" />
-          <button id="memberLoadBtn">불러오기</button>
-          <button class="reset" id="memberRegisterBtn">회원 등록</button>
-          <button class="primary" id="memberSaveBtn">저장</button>
-        </div>
-        <p class="hint" id="memberWelcomeText" style="margin-top:4px;"></p>
       </div>
 
       <div class="sub-section">
@@ -522,6 +511,7 @@
           <input type="number" id="spoonLiftHandTargetInput" min="0" max="100" value="70" />
           <label for="spoonLiftElbowTargetInput">팔꿈치 목표 %</label>
           <input type="number" id="spoonLiftElbowTargetInput" min="0" max="100" value="50" />
+          <button class="primary" id="spoonLiftSaveBtn">저장</button>
         </div>
         <p class="hint" id="spoonLiftSeedText" style="margin-top:8px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
       </div>
@@ -544,6 +534,7 @@
           <input type="number" id="bicepElbowReleaseTargetInput" min="0" max="100" value="20" />
           <label for="bicepRepsInput">반복 횟수</label>
           <input type="number" id="bicepRepsInput" min="1" max="100" value="5" />
+          <button class="primary" id="bicepSaveBtn">저장</button>
         </div>
         <p class="hint" id="bicepSeedText" style="margin-top:8px; color:var(--text-dim);">저장된 세기 없음 (0부터 자동 탐색)</p>
       </div>

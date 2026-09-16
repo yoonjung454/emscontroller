@@ -547,13 +547,9 @@ const actionElbowIntensityDisplay = document.getElementById("actionElbowIntensit
 const actionElbowStateText = document.getElementById("actionElbowStateText");
 const actionModeStatusText = document.getElementById("actionModeStatusText");
 
-// 회원 개인화 (행동 보조 모드)
-const memberIdInput = document.getElementById("memberIdInput");
-const memberNameInput = document.getElementById("memberNameInput");
-const memberLoadBtn = document.getElementById("memberLoadBtn");
-const memberRegisterBtn = document.getElementById("memberRegisterBtn");
-const memberSaveBtn = document.getElementById("memberSaveBtn");
-const memberWelcomeText = document.getElementById("memberWelcomeText");
+// 행동 보조 모드 설정 저장 버튼 (수저 들기 보조/이두운동 각자)
+const spoonLiftSaveBtn = document.getElementById("spoonLiftSaveBtn");
+const bicepSaveBtn = document.getElementById("bicepSaveBtn");
 const voiceCommandBtn = document.getElementById("voiceCommandBtn");
 const voiceCommandStatusText = document.getElementById("voiceCommandStatusText");
 
@@ -681,6 +677,7 @@ buildActionButtons();
 initVoiceCommand();
 initSafetyUi();
 initPresetLabels();
+applyStoredActionSettings(); // 저장된 수저 들기 보조/이두운동 설정을 페이지 열자마자 채움
 // AI 명령 해석(Gemini) UI는 예전 거울 모드 카드와 함께 제거됨 -- 아래 3줄과
 // updateAiUi() 호출 비활성화 (관련 함수/설정 로드-저장 로직은 그대로 남아있음)
 // aiEnabledCheckbox.checked = aiConfig.enabled;
@@ -739,15 +736,8 @@ modeTestBtn.addEventListener("click", () => setAppMode("test"));
 spoonLiftBtn.addEventListener("click", () => startSpoonLiftClosedLoop());
 bicepBtn.addEventListener("click", () => startBicepClosedLoop());
 
-memberLoadBtn.addEventListener("click", loadMember);
-memberIdInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") loadMember();
-});
-memberRegisterBtn.addEventListener("click", () => registerMember(memberRegisterBtn));
-// "저장" 버튼 -- registerMember()는 원래도 새 회원 등록/기존 회원 갱신을 둘 다
-// 처리하는 upsert라, 완전히 같은 동작을 좀 더 직관적인 이름으로 한 번 더
-// 눌러줄 수 있게 옆에 추가한 것뿐이다(별도 로직 없음).
-memberSaveBtn.addEventListener("click", () => registerMember(memberSaveBtn));
+spoonLiftSaveBtn.addEventListener("click", () => saveActionInputs("spoonLift", spoonLiftSaveBtn));
+bicepSaveBtn.addEventListener("click", () => saveActionInputs("bicep", bicepSaveBtn));
 voiceCommandBtn.addEventListener("click", toggleVoiceCommand);
 
 calActionSpoonBtn.addEventListener("click", () => selectPersonalizationCalAction("spoonLift"));
@@ -2294,104 +2284,68 @@ function setAppMode(mode) {
 }
 
 // ============================================================================
-// 회원 개인화 -- 같은 세기라도 사람마다 반응이 달라서, 회원번호별로 행동 보조
-// 모드 입력값(채널1/채널2/반복 횟수)을 저장해뒀다가 불러온다. localStorage에
-// 저장 (참가자 프로필/Supabase 버전과는 별개 -- 그건 나중에 다시 붙일 예정이라
-// 지금은 이 간단한 로컬 버전으로 감).
+// 행동 보조 모드 설정 저장 -- 예전엔 회원번호별로 따로 저장했는데(참가자마다
+// 목표%가 다를 수 있다는 가정), 실제로는 그렇게 나눠 쓰지 않아서 회원번호
+// 자체를 없앴다. 이제는 "이 컴퓨터에서 마지막으로 저장한 값 하나"만
+// localStorage에 기억한다 -- 수저 들기 보조/이두운동 각자의 "저장" 버튼으로
+// 저장하고, 페이지를 새로 열면 자동으로 다시 채워진다.
 // ============================================================================
 
-function loadMembers() {
+function loadActionSettings() {
   try {
-    const raw = localStorage.getItem("emsWebMembers");
+    const raw = localStorage.getItem("emsWebActionSettings");
     if (raw) return JSON.parse(raw);
   } catch (e) { /* ignore */ }
   return {};
 }
-function saveMembers(members) {
-  localStorage.setItem("emsWebMembers", JSON.stringify(members));
+function saveActionSettings(settings) {
+  localStorage.setItem("emsWebActionSettings", JSON.stringify(settings));
 }
 
-function loadMember() {
-  const id = memberIdInput.value.trim();
-  if (!id) {
-    showToast("회원번호를 입력하세요", "warn");
-    return;
+// 페이지를 열 때(또는 저장 직후) 저장된 값으로 입력칸을 채운다.
+function applyStoredActionSettings() {
+  const s = loadActionSettings();
+  if (s.spoonLift) {
+    spoonLiftHandTargetInput.value = s.spoonLift.handTarget ?? 70;
+    spoonLiftElbowTargetInput.value = s.spoonLift.elbowTarget ?? 50;
   }
-  const members = loadMembers();
-  const member = members[id];
-  if (!member) {
-    memberWelcomeText.textContent = `⚠ "${id}"는 등록되지 않은 회원번호입니다. 아래 값을 입력하고 "회원 등록"을 눌러 새로 등록하세요.`;
-    memberWelcomeText.style.color = "var(--warn)";
-    showToast(`⚠ "${id}"는 등록되지 않은 회원입니다`, "warn");
-    return;
+  if (s.bicep) {
+    bicepHandTargetInput.value = s.bicep.handTarget ?? 70;
+    bicepElbowCurlTargetInput.value = s.bicep.elbowCurlTarget ?? 85;
+    bicepElbowReleaseTargetInput.value = s.bicep.elbowReleaseTarget ?? 20;
+    bicepRepsInput.value = s.bicep.reps ?? 5;
   }
-
-  memberNameInput.value = member.name || "";
-  const a = member.actions || {};
-  if (a.spoonLift) {
-    spoonLiftHandTargetInput.value = a.spoonLift.handTarget ?? 70;
-    spoonLiftElbowTargetInput.value = a.spoonLift.elbowTarget ?? 50;
-  }
-  if (a.bicep) {
-    bicepHandTargetInput.value = a.bicep.handTarget ?? 70;
-    bicepElbowCurlTargetInput.value = a.bicep.elbowCurlTarget ?? 85;
-    bicepElbowReleaseTargetInput.value = a.bicep.elbowReleaseTarget ?? 20;
-    bicepRepsInput.value = a.bicep.reps ?? 5;
-  }
-
-  memberWelcomeText.textContent = `✅ ${member.name}님 환영합니다 -- 저장된 목표 %를 불러왔습니다.`;
-  memberWelcomeText.style.color = "var(--accent-2)";
-  logControl(`👤 회원 불러오기: ${id} (${member.name})`);
-  showToast(`✅ ${member.name}님 환영합니다`, "ok");
-  flashButtonPress(memberLoadBtn, "✅ 불러옴!");
-
-  // 지금 개인화 측정 선택 상태(수저/이두)의 목표% 입력칸도 이 회원 값으로 갱신,
-  // 실행 버튼 아래 "저장된 세기" 안내도 갱신.
   selectPersonalizationCalAction(personalizationCalActionKey);
   updateActionSeedTexts();
 }
 
-function registerMember(btn = memberRegisterBtn) {
-  const id = memberIdInput.value.trim();
-  const name = memberNameInput.value.trim();
-  if (!id || !name) {
-    showToast("회원번호와 이름을 모두 입력하세요", "warn");
-    return;
+// key: "spoonLift" | "bicep" -- 지금 그 섹션 입력칸의 목표%(/반복 횟수)만
+// 저장한다. 개인화 측정으로 찾아둔 handIntensity/elbowIntensity는 이 입력칸과
+// 무관한 값이라 기존 걸 그대로 이어서 들고 간다(덮어쓰지 않음).
+function saveActionInputs(key, btn) {
+  const settings = loadActionSettings();
+  const prev = settings[key] || {};
+  if (key === "spoonLift") {
+    settings.spoonLift = {
+      handTarget: Math.max(0, Math.min(100, Number(spoonLiftHandTargetInput.value) || 0)),
+      elbowTarget: Math.max(0, Math.min(100, Number(spoonLiftElbowTargetInput.value) || 0)),
+      handIntensity: prev.handIntensity ?? null,
+      elbowIntensity: prev.elbowIntensity ?? null
+    };
+  } else {
+    settings.bicep = {
+      handTarget: Math.max(0, Math.min(100, Number(bicepHandTargetInput.value) || 0)),
+      elbowCurlTarget: Math.max(0, Math.min(100, Number(bicepElbowCurlTargetInput.value) || 0)),
+      elbowReleaseTarget: Math.max(0, Math.min(100, Number(bicepElbowReleaseTargetInput.value) || 0)),
+      reps: Math.max(1, Math.min(100, Number(bicepRepsInput.value) || 5)),
+      handIntensity: prev.handIntensity ?? null,
+      elbowIntensity: prev.elbowIntensity ?? null
+    };
   }
-
-  const members = loadMembers();
-  // ⚠ 이전엔 매번 members[id] 전체를 새로 만들어서, 목표%만 고쳐서 "회원 등록"을
-  // 다시 눌러도 개인화 측정으로 찾아둔 handIntensity/elbowIntensity가 같이
-  // 지워졌다. 그 값들은 이 입력칸들과 무관하게(개인화 측정에서만) 채워지는
-  // 값이라, 기존 값을 먼저 읽어와 그대로 이어서 들고 간다.
-  const prevSpoon = members[id]?.actions?.spoonLift || {};
-  const prevBicep = members[id]?.actions?.bicep || {};
-  members[id] = {
-    name,
-    actions: {
-      spoonLift: {
-        handTarget: Math.max(0, Math.min(100, Number(spoonLiftHandTargetInput.value) || 0)),
-        elbowTarget: Math.max(0, Math.min(100, Number(spoonLiftElbowTargetInput.value) || 0)),
-        handIntensity: prevSpoon.handIntensity ?? null,
-        elbowIntensity: prevSpoon.elbowIntensity ?? null
-      },
-      bicep: {
-        handTarget: Math.max(0, Math.min(100, Number(bicepHandTargetInput.value) || 0)),
-        elbowCurlTarget: Math.max(0, Math.min(100, Number(bicepElbowCurlTargetInput.value) || 0)),
-        elbowReleaseTarget: Math.max(0, Math.min(100, Number(bicepElbowReleaseTargetInput.value) || 0)),
-        reps: Math.max(1, Math.min(100, Number(bicepRepsInput.value) || 5)),
-        handIntensity: prevBicep.handIntensity ?? null,
-        elbowIntensity: prevBicep.elbowIntensity ?? null
-      }
-    }
-  };
-  saveMembers(members);
-
-  memberWelcomeText.textContent = `✅ ${name}님(${id}) 등록/저장 완료 -- 지금 입력칸의 목표 %로 저장했습니다.`;
-  memberWelcomeText.style.color = "var(--accent-2)";
-  logControl(`👤 회원 등록/갱신: ${id} (${name})`);
-  showToast(`✅ ${name}님 저장 완료`, "ok");
-  flashButtonPress(btn, "✅ 저장됨!");
+  saveActionSettings(settings);
+  logControl(`💾 ${ACTION_MODE_DEFS[key].label} 설정 저장`);
+  showToast(`✅ ${ACTION_MODE_DEFS[key].label} 설정 저장 완료`, "ok");
+  if (btn) flashButtonPress(btn, "✅ 저장됨!");
   updateActionSeedTexts();
 }
 
@@ -2557,7 +2511,7 @@ async function startSpoonLiftClosedLoop() {
   const elbowTarget = Math.max(0, Math.min(100, Number(spoonLiftElbowTargetInput.value) || 0));
 
   resetActionAxisCtrls();
-  seedActionAxisCtrlsFromMember(key); // 회원의 개인화 측정값이 있으면 그 세기부터 시작(웜스타트)
+  seedActionAxisCtrls(key); // 저장된 개인화 측정값이 있으면 그 세기부터 시작(웜스타트)
   runningActionKey = key;
   def.btn.textContent = `■ ${def.label} 정지`;
   def.btn.classList.add("running");
@@ -2653,7 +2607,7 @@ async function startBicepClosedLoop() {
   const reps = Math.max(1, Math.min(100, Number(bicepRepsInput.value) || 1));
 
   resetActionAxisCtrls();
-  seedActionAxisCtrlsFromMember(key); // 회원의 개인화 측정값이 있으면 그 세기부터 시작(웜스타트)
+  seedActionAxisCtrls(key); // 저장된 개인화 측정값이 있으면 그 세기부터 시작(웜스타트)
   runningActionKey = key;
   def.btn.textContent = "■ 이두운동 정지";
   def.btn.classList.add("running");
@@ -2873,7 +2827,7 @@ function personalizationCalTick(state) {
 }
 
 // 양쪽 다 찾은 뒤(정상 완료) 호출 -- 목표%/찾은 세기를 실행 버튼 입력칸과
-// (회원번호가 있으면) 회원 저장소에 반영하고 정지한다.
+// 설정 저장소(localStorage, 이 컴퓨터 공용)에 반영하고 정지한다.
 function finishPersonalizationCal(state, armFound) {
   const key = personalizationCalActionKey;
   const label = ACTION_MODE_DEFS[key].label;
@@ -2889,23 +2843,17 @@ function finishPersonalizationCal(state, armFound) {
     bicepElbowCurlTargetInput.value = state.armTarget;
   }
 
-  const id = memberIdInput.value.trim();
-  if (id) {
-    const members = loadMembers();
-    if (!members[id]) members[id] = { name: memberNameInput.value.trim() || id, actions: {} };
-    if (!members[id].actions[key]) members[id].actions[key] = {};
-    const rec = members[id].actions[key];
-    rec.handTarget = state.handTarget;
-    rec.handIntensity = state.handFound;
-    rec.elbowIntensity = armFound;
-    if (key === "spoonLift") rec.elbowTarget = state.armTarget;
-    else rec.elbowCurlTarget = state.armTarget;
-    saveMembers(members);
-    calResultText.innerHTML = `✅ <b>${id}</b>님(${label}) 저장 완료 -- 손 세기 <b>${state.handFound}</b> · 팔꿈치 세기 <b>${armFound}</b> (목표 손 ${state.handTarget}% / 팔꿈치 ${state.armTarget}%)`;
-    updateActionSeedTexts();
-  } else {
-    calResultText.innerHTML = `✅ 측정 완료(회원번호가 없어 저장은 안 됐습니다) -- 손 세기 <b>${state.handFound}</b> · 팔꿈치 세기 <b>${armFound}</b>`;
-  }
+  const settings = loadActionSettings();
+  if (!settings[key]) settings[key] = {};
+  const rec = settings[key];
+  rec.handTarget = state.handTarget;
+  rec.handIntensity = state.handFound;
+  rec.elbowIntensity = armFound;
+  if (key === "spoonLift") rec.elbowTarget = state.armTarget;
+  else rec.elbowCurlTarget = state.armTarget;
+  saveActionSettings(settings);
+  calResultText.innerHTML = `✅ ${label} 저장 완료 -- 손 세기 <b>${state.handFound}</b> · 팔꿈치 세기 <b>${armFound}</b> (목표 손 ${state.handTarget}% / 팔꿈치 ${state.armTarget}%)`;
+  updateActionSeedTexts();
   showToast("✅ 개인화 측정 완료", "ok", 4000);
   stopPersonalizationCal(null);
 }
@@ -2931,26 +2879,23 @@ function stopPersonalizationCal(reason) {
   }
 }
 
-// 회원번호 입력칸에 있는 회원의 저장된 세기를, 실행 버튼(spoonLift/bicep)이
-// 시작할 때 웜스타트로 쓸 수 있게 actionHandCtrl/actionElbowCtrl에 채워둔다
-// (개인화 측정으로 "이 목표%엔 세기가 얼마 필요한지" 미리 찾아뒀다면, 매번
-// 0부터 다시 찾지 않고 그 값부터 시작 -- 도달 속도가 훨씬 빨라진다).
-function seedActionAxisCtrlsFromMember(key) {
-  const id = memberIdInput.value.trim();
-  if (!id) return;
-  const rec = loadMembers()[id]?.actions?.[key];
+// 저장된 세기를, 실행 버튼(spoonLift/bicep)이 시작할 때 웜스타트로 쓸 수
+// 있게 actionHandCtrl/actionElbowCtrl에 채워둔다 (개인화 측정으로 "이
+// 목표%엔 세기가 얼마 필요한지" 미리 찾아뒀다면, 매번 0부터 다시 찾지 않고
+// 그 값부터 시작 -- 도달 속도가 훨씬 빨라진다).
+function seedActionAxisCtrls(key) {
+  const rec = loadActionSettings()[key];
   if (!rec) return;
   if (typeof rec.handIntensity === "number") actionHandCtrl.intensity = rec.handIntensity;
   if (typeof rec.elbowIntensity === "number") actionElbowCtrl.intensity = rec.elbowIntensity;
 }
 
-// spoonLift/bicep 실행 섹션 아래 "저장된 세기" 안내 문구 갱신 -- 회원 불러오기/
+// spoonLift/bicep 실행 섹션 아래 "저장된 세기" 안내 문구 갱신 -- 설정 저장/
 // 개인화 측정 완료 시점에 호출된다.
 function updateActionSeedTexts() {
-  const id = memberIdInput.value.trim();
-  const members = id ? loadMembers() : {};
-  const spoon = members[id]?.actions?.spoonLift;
-  const bicep = members[id]?.actions?.bicep;
+  const settings = loadActionSettings();
+  const spoon = settings.spoonLift;
+  const bicep = settings.bicep;
   spoonLiftSeedText.textContent =
     spoon && typeof spoon.handIntensity === "number"
       ? `저장된 세기: 손 ${spoon.handIntensity} · 팔꿈치 ${spoon.elbowIntensity} (실행 시 이 세기부터 시작)`
