@@ -16,6 +16,7 @@ const VOICE_AWAKE_WINDOW_MS = 10000;
 let voiceEnabled = false;          // 마이크 버튼/자동 시작으로 켠 상태 -- 켜져 있으면 onend에서 계속 재시작해서 "항상 듣는 중"이 됨
 let voiceAwakeUntil = 0;           // performance.now() 기준, 이 시각까지는 이름을 부른 것으로 치고 명령을 받아들임
 let voicePendingBicepReps = false; // "이두운동해줘" 듣고 몇 회인지 되묻는 중인지
+let voiceSessionActive = false;    // 지금 브라우저 인식 세션이 실제로 살아있는지(onstart~onend 사이) -- watchdog이 이걸로 죽었는지 판단
 
 // ============================================================================
 // Supabase (참가자별 캘리브레이션/개인화 프로필 클라우드 저장)
@@ -646,7 +647,7 @@ if (SpeechRecognitionCtor) toggleVoiceCommand();
 // "탱글아"로 깨어난 뒤 10초가 지나면 오른쪽 위 표시가 저절로 "듣고 있음"으로
 // 돌아와야 하는데, 새로 말을 걸지 않으면 그 갱신을 트리거할 이벤트가 없어서
 // 주기적으로(0.5초마다) 다시 그려준다.
-setInterval(updateVoiceIndicator, 500);
+setInterval(() => { watchVoiceSession(); updateVoiceIndicator(); }, 500);
 // AI 명령 해석(Gemini) UI는 예전 거울 모드 카드와 함께 제거됨 -- 아래 3줄과
 // updateAiUi() 호출 비활성화 (관련 함수/설정 로드-저장 로직은 그대로 남아있음)
 // aiEnabledCheckbox.checked = aiConfig.enabled;
@@ -2329,6 +2330,10 @@ function initVoiceCommand() {
   voiceRecognition.interimResults = false;
   voiceRecognition.maxAlternatives = 1;
 
+  voiceRecognition.onstart = () => {
+    voiceSessionActive = true;
+  };
+
   voiceRecognition.onresult = (event) => {
     // continuous 모드에서는 event.results에 이전 것들이 계속 쌓일 수 있어서,
     // 이번에 새로 들어온 마지막 결과만 본다.
@@ -2352,12 +2357,27 @@ function initVoiceCommand() {
   };
 
   voiceRecognition.onend = () => {
-    // 브라우저가 일정 시간 뒤 세션을 자체적으로 끊는 경우가 있어서, 사용자가
-    // 마이크를 끄지 않았으면(voiceEnabled) 바로 다시 시작해서 "항상 듣는 중"을 유지한다.
+    // ⚠ 버그 수정: 한 번 명령을 실행하고 나면(특히 speak()로 소리를 낸 뒤)
+    // 그 다음부턴 "탱글아"를 불러도 반응이 없고 마이크를 껐다 켜야만 다시
+    // 되던 문제 -- 브라우저가 이 세션을 조용히 끊었는데, 그 직후 바로 부르는
+    // start()가 (이전 세션이 완전히 안 정리된 타이밍 등으로) 실패하면 그냥
+    // 조용히 포기하고 있었다. voiceSessionActive를 꺼두고, 아래 watchdog이
+    // 몇 초 안에 이걸 보고 계속 재시도하게 해서 스스로 복구되게 한다.
+    voiceSessionActive = false;
     if (voiceEnabled) {
-      try { voiceRecognition.start(); } catch (e) { /* 이미 시작된 상태 등 방어 */ }
+      try { voiceRecognition.start(); } catch (e) { /* 실패해도 watchdog이 계속 재시도함 */ }
     }
   };
+}
+
+// onend/onerror만으로는 완전히 못 잡는 경우(이벤트 자체가 안 오거나, onend의
+// 즉시 재시작이 타이밍 문제로 실패하는 경우)에 대비한 안전망. voiceEnabled인데
+// 세션이 살아있지 않은 상태가 잠깐이라도 관측되면 계속 start()를 다시
+// 시도한다 -- 이미 살아있으면(voiceSessionActive) 아무것도 안 하므로, 정상
+// 작동 중일 땐 그냥 조용하다.
+function watchVoiceSession() {
+  if (!voiceRecognition || !voiceEnabled || voiceSessionActive) return;
+  try { voiceRecognition.start(); } catch (e) { /* 아직 이전 세션 정리 중일 수 있음 -- 다음 tick에 다시 시도 */ }
 }
 
 function isWakeWord(text) {
