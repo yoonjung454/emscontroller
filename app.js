@@ -2779,13 +2779,11 @@ function spoonLiftTick(state) {
 
 // ============================================================================
 // 💪 이두운동 -- 손 목표로 쥔 채 유지하고, 팔꿈치가 "굽힘 목표 ↔ 이완 목표"를
-// 반복 횟수만큼 오간다. 예전엔 각 단계 시간을 고정값(3초/1초 등)으로 정해뒀는데,
-// 이제 그 "몇 초 걸리는지"를 사람마다 다르게 자동으로 맞추는 게 이 폐루프의
-// 핵심이라 고정 시간표 자체가 없다 -- 카메라가 실제로 그 %에 도달(LOCKED)하면
-// 바로 다음 단계로 넘어간다. 굽힘 유지 시간(BICEP_CURL_HOLD_MS)만 고정값으로
-// 남겨뒀다 (예전 BICEP_CH2_HOLD_MS와 같은 개념 -- "도달 후 잠깐 버티기").
+// 반복 횟수만큼 오간다. 각 단계는 정해진 시간이 아니라 카메라가 실제로 그
+// %에 도달(LOCKED)하면 바로 다음 단계로 넘어간다 -- 고정 시간표 자체가 없다
+// (굽힘 도달 후 잠깐 유지하는 단계가 있었는데, "도착하면 바로 천천히
+// 내려가자"는 요청으로 없앰 -- 도달 즉시 이완으로 넘어감).
 // ============================================================================
-const BICEP_CURL_HOLD_MS = 500;
 
 async function startBicepClosedLoop() {
   const key = "bicep";
@@ -2821,8 +2819,7 @@ async function startBicepClosedLoop() {
   const state = {
     handTarget, elbowCurlTarget, elbowReleaseTarget, reps,
     repIndex: 0,
-    phase: "grip", // grip -> curl -> hold -> release -> (curl... 반복) -> 완료
-    holdStartedAt: null
+    phase: "grip" // grip -> curl -> release -> (curl... 반복) -> 완료
   };
   bicepClosedLoopTick(state); // 즉시 한 번 전송
   actionModeInterval = setInterval(() => bicepClosedLoopTick(state), 400);
@@ -2873,18 +2870,11 @@ function bicepClosedLoopTick(state) {
     stepFlexOnlyAxis(actionElbowCtrl, state.elbowCurlTarget, armLatestPercent.actual, now);
     phaseLabel = `${state.repIndex}/${state.reps}회차 -- 팔꿈치 굽히는 중 (목표 ${state.elbowCurlTarget}%)`;
     if (actionElbowCtrl.state === "LOCKED") {
-      // 수축(굽힘) 완료 = 1회로 센다 -- 유지/이완까지 기다리지 않고 굽힘
-      // 목표에 도달하는 그 순간 바로 횟수를 세고 소리로 알려준다.
+      // 수축(굽힘) 완료 = 1회로 센다. 유지 단계 없이 도달하는 즉시 바로
+      // 이완으로 넘어간다(요청대로 "도착하면 바로 천천히 내려가자").
       speak(`${state.repIndex}회`);
       logControl(`💪 수축 완료 -- ${state.repIndex}/${state.reps}회`);
       showToast(`💪 ${state.repIndex}회 완료`, "ok", 1500);
-      state.phase = "hold";
-      state.holdStartedAt = now;
-    }
-  } else if (state.phase === "hold") {
-    stepFlexOnlyAxis(actionElbowCtrl, state.elbowCurlTarget, armLatestPercent.actual, now);
-    phaseLabel = `${state.repIndex}/${state.reps}회차 -- 팔꿈치 유지 중`;
-    if (now - state.holdStartedAt >= BICEP_CURL_HOLD_MS) {
       state.phase = "release";
     }
   } else if (state.phase === "release") {
