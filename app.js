@@ -2869,9 +2869,10 @@ function bicepClosedLoopTick(state) {
   } else if (state.phase === "curl") {
     stepFlexOnlyAxis(actionElbowCtrl, state.elbowCurlTarget, armLatestPercent.actual, now);
     phaseLabel = `${state.repIndex}/${state.reps}회차 -- 팔꿈치 굽히는 중 (목표 ${state.elbowCurlTarget}%)`;
-    if (actionElbowCtrl.state === "LOCKED") {
-      // 수축(굽힘) 완료 = 1회로 센다. 유지 단계 없이 도달하는 즉시 바로
-      // 이완으로 넘어간다(요청대로 "도착하면 바로 천천히 내려가자").
+    // ⚠ LOCKED(허용범위 안에서 successHoldSeconds만큼 버텨야 함)를 기다리지
+    // 않고, 실제 굽힘이 목표치에 도달하거나 넘어서는 그 즉시 이완으로
+    // 넘어간다 -- "수축이 목표 이상 되면 바로 이완"이라는 요청대로.
+    if (armLatestPercent.actual !== null && armLatestPercent.actual >= state.elbowCurlTarget) {
       speak(`${state.repIndex}회`);
       logControl(`💪 수축 완료 -- ${state.repIndex}/${state.reps}회`);
       showToast(`💪 ${state.repIndex}회 완료`, "ok", 1500);
