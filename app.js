@@ -16,6 +16,7 @@ const VOICE_AWAKE_WINDOW_MS = 10000;
 let voiceEnabled = false;          // 마이크 버튼/자동 시작으로 켠 상태 -- 켜져 있으면 onend에서 계속 재시작해서 "항상 듣는 중"이 됨
 let voiceAwakeUntil = 0;           // performance.now() 기준, 이 시각까지는 이름을 부른 것으로 치고 명령을 받아들임
 let voicePendingBicepReps = false; // "이두운동해줘" 듣고 몇 회인지 되묻는 중인지
+let voicePendingSpoonLiftConfirm = false; // 밥/수저 관련 말 듣고 "실행할까요?" 되물은 뒤 대답을 기다리는 중인지
 let voiceSessionActive = false;    // 지금 브라우저 인식 세션이 실제로 살아있는지(onstart~onend 사이) -- watchdog이 이걸로 죽었는지 판단
 
 // ============================================================================
@@ -2406,6 +2407,23 @@ function matchesSpoonLiftPhrase(text) {
   return ["수저", "숟가락", "밥먹고싶", "밥먹는거", "밥먹여줘"].some((kw) => text.includes(kw));
 }
 
+// "응", "네", "해줘"처럼 긍정으로 대답했는지 판단 -- 수저 들기 보조를 실제
+// 실행하기 전에 한 번 더 확인받을 때 씀(밥/수저 얘기만 하고 실제로는
+// 원하지 않았을 수도 있어서, 바로 실행하지 않고 되물어본다).
+function isAffirmative(text) {
+  return ["응", "네", "예", "그래", "좋아", "해줘", "해주세요", "실행", "시작", "오케이", "okay", "ok"].some((kw) =>
+    text.includes(kw)
+  );
+}
+
+// 밥/수저 관련 말이 들리면 바로 실행하지 않고 한 번 되물어본다.
+function askSpoonLiftConfirmation() {
+  voicePendingSpoonLiftConfirm = true;
+  voiceAwakeUntil = performance.now() + VOICE_AWAKE_WINDOW_MS;
+  speak("수저 들기 보조를 실행할까요?");
+  voiceCommandStatusText.textContent = "🎤 수저 들기 보조 -- 실행할까요? (\"응\", \"해줘\" 등으로 대답해주세요)";
+}
+
 // 위 키워드 매칭으로 못 잡은(정해진 문구가 아닌) 발화를 AI(Gemini)에게 보내
 // "수저 들기 보조/이두운동/둘 다 아님" 중 뭘 원하는지 판단시킨다. API 키가
 // 없으면 아예 호출하지 않고 null을 반환 -- 호출자는 이 경우 그냥 "이해 못함"
@@ -2508,6 +2526,19 @@ async function handleVoiceTranscript(transcript) {
     if (heardWake) voiceAwakeUntil = now + VOICE_AWAKE_WINDOW_MS;
     const awake = now < voiceAwakeUntil;
 
+    // ---- 수저 들기 보조 실행 여부를 되물은 직후라면, 이번 발화는 그 대답으로 취급 ----
+    if (voicePendingSpoonLiftConfirm) {
+      if (!awake) { voicePendingSpoonLiftConfirm = false; return; } // 너무 오래 걸림 -- 처음부터 다시
+      voicePendingSpoonLiftConfirm = false;
+      if (isAffirmative(text)) {
+        startSpoonLiftFromVoice();
+      } else {
+        speak("알겠습니다");
+        voiceCommandStatusText.textContent = "수저 들기 보조를 실행하지 않았습니다.";
+      }
+      return;
+    }
+
     // ---- 이두운동 반복 횟수를 되묻은 직후라면, 이번 발화는 그 대답으로 취급 ----
     if (voicePendingBicepReps) {
       if (!awake) { voicePendingBicepReps = false; return; } // 너무 오래 걸림 -- 처음부터(이름부터) 다시
@@ -2526,7 +2557,7 @@ async function handleVoiceTranscript(transcript) {
     if (!awake) return; // 이름도 안 불렀고, 부른 지 오래 지남 -- 그냥 지나가는 대화로 보고 무시
 
     if (matchesSpoonLiftPhrase(text)) {
-      startSpoonLiftFromVoice();
+      askSpoonLiftConfirmation();
       return;
     }
     if (text.includes("이두")) {
@@ -2545,7 +2576,7 @@ async function handleVoiceTranscript(transcript) {
       voiceCommandStatusText.textContent = `🤖 "${transcript}" 이해하는 중...`;
       const result = await classifyVoiceIntentWithAI(transcript);
       if (result?.action === "spoon_lift") {
-        startSpoonLiftFromVoice();
+        askSpoonLiftConfirmation();
         return;
       }
       if (result?.action === "bicep") {
