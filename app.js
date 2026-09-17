@@ -1139,7 +1139,9 @@ async function startRun() {
         minTrackingConfidence: 0.7
       });
     }
-    if (appMode !== "mirror") await ensurePoseLandmarker().catch(() => {}); // 실패해도 카메라 자체는 켜지게 (아래 renderLoop가 poseLandmarker null이면 알아서 건너뜀)
+    // 팔 인식(Pose)이 실제로 필요한 모드(팔 인식/행동 보조)만 미리 불러온다 --
+    // 테스트 모드는 위 needsPose와 같은 이유로 더 이상 Pose를 안 쓴다.
+    if (appMode === "arm" || appMode === "action") await ensurePoseLandmarker().catch(() => {}); // 실패해도 카메라 자체는 켜지게 (아래 renderLoop가 poseLandmarker null이면 알아서 건너뜀)
 
     // ⚠ 정확도 개선: 640x480은 손엔 충분했지만 팔(어깨~손목 전체)까지 잡으려면
     // 화면에서 관절 하나하나가 차지하는 픽셀 수가 너무 적어서 각도 오차가 컸다.
@@ -1222,17 +1224,22 @@ function renderLoop() {
 
     const result = handLandmarker.detectForVideo(canvas, performance.now());
     // 거울 모드만 손 인식 하나로 충분해서 Pose 모델을 끄고, 나머지(팔 인식/
-    // 행동 보조/테스트) 모드는 전부 Pose도 같이 돌린다 -- "거울 모드 제외
-    // 전부 팔 인식 가능하게" 요청.
+    // 행동 보조) 모드는 Pose도 같이 돌린다.
     // ⚠ 버그 수정: 행동 보조 모드는 원래 "runningActionKey !== null"(실행
     // 버튼을 눌러 루틴이 실제로 돌고 있을 때)만 조건으로 걸어뒀었다. 그래서
     // 행동 보조 모드 화면에 들어가기만 하고 아직 실행을 안 누른 상태에서는
-    // 팔 인식이 전혀 안 되는 것처럼 보였다(테스트 모드는 appMode 조건 하나뿐이라
-    // 바로 됐음) -- appMode === "action"도 무조건 켜지게 바꿔서 화면에 들어가는
-    // 즉시 팔 인식이 되게 함. 테스트 모드는 여전히 카메라 없이도 방향키로 전류를
-    // 낼 수 있다(테스트 모드 키 입력은 이 값을 전혀 참조하지 않음); 켜져
-    // 있으면 화면에 팔/손 인식 결과가 참고용으로 같이 보일 뿐이다.
-    const needsPose = (appMode === "arm" || appMode === "test" || appMode === "action") && poseLandmarker;
+    // 팔 인식이 전혀 안 되는 것처럼 보였다 -- appMode === "action"도 무조건
+    // 켜지게 바꿔서 화면에 들어가는 즉시 팔 인식이 되게 함.
+    //
+    // ⚠ 버그 수정(2차): 한때 "거울 모드 제외 전부 팔 인식"으로 테스트 모드도
+    // 여기 포함시켰었는데, Pose 모델(특히 정확도 개선 후의 "full" 모델+고해상도)
+    // 이 메인 스레드를 프레임마다 붙잡고 있는 시간이 길어져서, 카메라를 켜둔
+    // 채 테스트 모드 방향키를 뗐을 때 그 "정지(세기 0)" 시리얼 명령이 밀려서
+    // 늦게 나가는 바람에 "손 뗐는데도 전기가 계속 옴"이라는 안전 문제가
+    // 생겼다. 테스트 모드는 "카메라 없이도 즉시 정지"가 핵심 요구사항이라
+    // 팔 인식(참고용 표시일 뿐이었음)을 다시 뺐다 -- 손 스켈레톤은 원래도
+    // 모드와 무관하게 항상 그려지므로 테스트 모드에서도 그대로 보인다.
+    const needsPose = (appMode === "arm" || appMode === "action") && poseLandmarker;
     const poseResult = needsPose
       ? poseLandmarker.detectForVideo(canvas, performance.now())
       : null;
@@ -2184,15 +2191,16 @@ function setAppMode(mode) {
       ? "<b>행동 보조 모드</b>: 손(채널1)·팔꿈치(채널2) 목표 %만 입력하면, 카메라로 실제 굽힘을 측정해가며 자극 세기를 자동으로 찾아 목표에 맞춥니다 (자동 세팅 폐루프, 사람마다 다른 반응에 자동으로 맞춰짐)."
       : mode === "arm"
       ? "<b>팔 인식 모드</b>: 왼팔의 팔꿈치 굽힘 정도를 실시간으로 오른팔 목표로 흘려보내고, 카메라로 측정한 오른팔의 실제 굽힘에 맞춰 자극 세기를 자동 조절합니다 (팔 버전 거울 모드)."
-      : "<b>테스트 모드</b>: 캘리브레이션 없이, ←(채널1)/→(채널2) 방향키를 누르고 있는 동안만 그 채널에 고정 세기로 자극을 내보냅니다 (하드웨어 연결을 빠르게 확인할 때 사용). 카메라를 켜두면 손/팔 인식 결과도 참고용으로 함께 표시되지만, 방향키 자극 자체는 카메라 없이도 동작합니다.";
+      : "<b>테스트 모드</b>: 캘리브레이션 없이, ←(채널1)/→(채널2) 방향키를 누르고 있는 동안만 그 채널에 고정 세기로 자극을 내보냅니다 (하드웨어 연결을 빠르게 확인할 때 사용). 카메라를 켜두면 손 인식 결과가 참고용으로 함께 표시되지만, 방향키 자극 자체는 카메라 없이도 동작합니다. (팔 인식은 이 모드에서는 안 돌립니다 -- 방향키를 뗐을 때 전류가 바로 안 끊기는 문제가 있어서 뺐습니다.)";
 
   targetCompareLabel.textContent = mode === "arm" ? "TARGET (왼팔 · 실시간 연동)" : "TARGET (행동 선택 / 실시간 왼손 연동)";
   actualCompareLabel.textContent = mode === "arm" ? "ACTUAL (오른팔 · 팔꿈치 굽힘)" : "ACTUAL (오른손 · 4손가락 평균)";
 
-  // 팔 인식이 필요한 모드(팔 인식/행동 보조/테스트, 거울 모드 제외)는 아직
-  // 모델을 안 불러왔을 수 있으니(perf를 위해 지연 로딩) 이 시점에 미리
-  // 불러오기 시작 -- 카메라 실행 버튼을 누르기 전에 미리 받아둔다.
-  if (mode !== "mirror" && !poseLandmarker) {
+  // 팔 인식이 필요한 모드(팔 인식/행동 보조)는 아직 모델을 안 불러왔을 수
+  // 있으니(perf를 위해 지연 로딩) 이 시점에 미리 불러오기 시작 -- 카메라
+  // 실행 버튼을 누르기 전에 미리 받아둔다. 테스트 모드는 이제 안 씀(위
+  // needsPose 주석 참고 -- 방향키 뗐을 때 전류가 바로 안 끊기는 문제가 있었음).
+  if ((mode === "arm" || mode === "action") && !poseLandmarker) {
     showToast("🦾 팔 인식 모델을 불러오는 중입니다...", "ok", 3000);
     ensurePoseLandmarker()
       .then(() => showToast("✅ 팔 인식 모델 준비 완료", "ok"))
@@ -2975,6 +2983,14 @@ function updateController(currentPercent, now) {
     // controllerIntensity를 여기서 건드리지 않으므로, 목표에 접근하며
     // 마지막으로 계산됐던 값이 그대로 유지된다.
     //
+    // ⚠ 버그 수정: 단, 목표(targetPercent) 자체가 거의 0(실시간 왼손 연동 등에서
+    // "구부리지 말라"는 뜻)인데 실제 굽힘도 마침 그 근처면, 이 순간까지 남아있던
+    // 세기를 그대로 "유지"해버려서 목표가 0이 됐는데도 전기가 계속 나가는
+    // 문제가 있었다 -- 목표가 거의 0일 땐 유지할 자세가 없으니 세기도 0으로.
+    if (targetPercent <= config.control.tolerancePercent) {
+      controllerIntensity = 0;
+    }
+    //
     // ⚠ 이러면 config.safety.maxContinuousStimSeconds(연속 자극 시간 안전
     // 상한, 기본 10초)에 그대로 걸린다 -- runtimeCheck()가 이 시간을 넘기면
     // 자동으로 비상정지시킨다. 코드가 이 값을 알아서 늘리지 않으니, 더 오래
@@ -3225,7 +3241,15 @@ function stepFlexOnlyAxis(ctrl, targetPercent, currentPercent, now) {
   }
   const error = targetPercent - currentPercent;
   if (Math.abs(error) <= config.control.tolerancePercent) {
-    // 허용 오차 범위 안 -- 지금 세기 그대로 유지.
+    // ⚠ 버그 수정: 목표(targetPercent) 자체가 거의 0(사실상 "구부리지 말라"는
+    // 뜻)인데 실제 굽힘도 마침 그 근처라서 허용 오차 안에 들어오면, 예전엔
+    // 그 순간까지 남아있던 intensity를 그대로 "유지"해버렸다 -- 목표가
+    // 낮아져서 0이 됐는데도 전기가 계속 나가던 원인. 목표가 거의 0일 땐
+    // 유지할 자세가 없으니 그냥 세기도 0으로 내린다(그 외의 정상적인
+    // "목표에 도달해서 유지" 상황은 기존처럼 마지막 세기를 그대로 유지).
+    if (targetPercent <= config.control.tolerancePercent) {
+      ctrl.intensity = 0;
+    }
     if (ctrl.successSince === null) ctrl.successSince = now;
     const heldForS = (now - ctrl.successSince) / 1000;
     ctrl.state = heldForS >= config.control.successHoldSeconds ? "LOCKED" : "HOLDING";
