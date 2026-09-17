@@ -1125,6 +1125,23 @@ async function ensurePoseLandmarker() {
         minPosePresenceConfidence: 0.7,
         minTrackingConfidence: 0.7
       });
+      // ⚠ 버그 수정: "행동 보조 모드에서 이두운동 하면 초반에 팔 엑추얼 값이
+      // 측정 안 됨" 피드백. createFromOptions()가 끝났다고 바로 실시간 속도로
+      // 추론되는 게 아니다 -- WASM 백엔드는 첫 detectForVideo() 호출에서
+      // 실제 추론 커널을 그제서야 준비(JIT)해서, "full" 모델+720p로 올린 뒤로
+      // 그 첫 호출 하나가 몇 초씩 걸렸다. 이 워밍업 비용이 하필 운동을 막
+      // 시작한 첫 몇 프레임에 그대로 나가서 "초반엔 안 잡히다가 나중에서야
+      // 잡히는" 것처럼 보였다. 준비 단계(로딩 토스트가 떠 있는 동안)에 아무
+      // 화면도 없는 빈 캔버스로 한 번 미리 호출해 그 비용을 여기서 대신
+      // 치르게 하면, 실제 운동이 시작될 땐 이미 워밍업이 끝나 있다.
+      try {
+        const warmupCanvas = document.createElement("canvas");
+        warmupCanvas.width = 1280;
+        warmupCanvas.height = 720;
+        poseLandmarker.detectForVideo(warmupCanvas, performance.now());
+      } catch (warmupErr) {
+        // 워밍업은 최선을 다하는 것일 뿐 -- 실패해도 모델 자체는 정상이므로 무시.
+      }
       return poseLandmarker;
     })().catch((err) => {
       poseLandmarkerPromise = null; // 실패하면 다음 시도 때 다시 불러올 수 있게 캐시 해제
