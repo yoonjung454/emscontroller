@@ -172,7 +172,18 @@ const DEFAULT_CONFIG = {
     successHoldSeconds: 1.5,
     maxStepUp: 1,
     maxStepDown: 1,
-    controlPeriodMs: 750 // getControlPeriodMs() = 750/2.5 = 300ms마다 최대 1씩 (900ms의 1/3)
+    controlPeriodMs: 750, // getControlPeriodMs() = 750/2.5 = 300ms마다 최대 1씩 (900ms의 1/3)
+    // ⚠ 버그 수정: "타겟이 액추얼보다 낮아졌는데 전기가 세진다"는 피드백.
+    // stepFlexOnlyAxis(팔 인식/행동 보조 모드, 단일 채널 flex-only 축)가 내려갈
+    // 때도 올라갈 때와 똑같이 kpDown/maxStepDown(=updateController 거울모드의
+    // "채널2 램프업 게인"과 공용)을 300ms 주기로만 써서, 실시간으로 계속
+    // 바뀌는 목표가 훅 내려가도 한동안 "액추얼이 목표보다 훨씬 높은" 채로
+    // 남아 전기가 계속/더 세지는 것처럼 보였다. kpDown/maxStepDown은
+    // updateController의 신전 채널 게인이라 건드리면 거울모드까지 영향받으므로
+    // 손대지 않고, stepFlexOnlyAxis 전용으로 내려가는 속도만 따로 크게 뒀다 --
+    // 세기를 낮추는 건 안전 문제가 없으니 올릴 때처럼 조심스러울 필요가 없다.
+    reduceKp: 0.6,
+    reduceMaxStep: 6
   },
   safety: {
     maxIntensity: 0,
@@ -3259,10 +3270,9 @@ async function driveHardwareIfNeeded(channel, intensity) {
 
 // ============================================================================
 // 팔 인식 모드 전용 폐루프 -- 손(채널1)과 팔꿈치(채널2)를 동시에 독립적으로
-// "부족하면 조심스럽게 증가, 도달했으면 유지"만 하는 단순 P제어. 손가락
-// 거울모드/일반 updateController()의 kpUp/maxStepUp 게인을 그대로 재사용한다
-// (펴는 채널이 없어서 kpDown/maxStepDown/채널전환 로직은 필요 없음 -- 그만큼
-// updateController()보다 훨씬 단순하다).
+// "부족하면 조심스럽게 증가(kpUp/maxStepUp), 넘치면 빠르게 감소(reduceKp/
+// reduceMaxStep), 도달했으면 유지"하는 단순 P제어 -- updateController()처럼
+// 펴는 채널로 전환하는 로직은 없어서 그만큼 훨씬 단순하다.
 // ============================================================================
 function stepFlexOnlyAxis(ctrl, targetPercent, currentPercent, now) {
   if (targetPercent === null || currentPercent === null) {
@@ -3288,29 +3298,35 @@ function stepFlexOnlyAxis(ctrl, targetPercent, currentPercent, now) {
   }
   ctrl.successSince = null;
 
+  if (error < 0) {
+    // 목표보다 더 구부러짐(또는 실시간 연동 목표가 방금 낮아짐) -- 세기를
+    // 낮추는 쪽은 안전 문제가 없으므로 주기 제한 없이 매 프레임 바로 반응해서
+    // 빠르게 따라 내려간다 (reduceKp/reduceMaxStep, 올릴 때보다 훨씬 큼). 예전엔
+    // 여기도 올릴 때와 똑같이 300ms에 1씩만 내려가서, 실시간으로 계속 바뀌는
+    // 목표가 훅 낮아져도 한동안 "액추얼이 목표보다 훨씬 높은" 채로 남아 전기가
+    // 계속/더 세지는 것처럼 보이는 문제가 있었다.
+    ctrl.lastStepTime = now;
+    const step = Math.min(config.control.reduceMaxStep, config.control.reduceKp * Math.abs(error));
+    ctrl.intensity = clampWorkingFloat(ctrl.intensity - step);
+    ctrl.state = "REDUCING";
+    return;
+  }
+
   // ⚠ 버그 수정: 이 함수는 카메라 프레임마다(초당 수십 번) 불렸는데, 거울모드
   // updateController()는 원래 control_period_ms 주기로만 세기를 바꾼다.
   // 여기 그 제한이 빠져있어서 체감 속도가 실제보다 수십 배 빠르게 느껴졌다
-  // ("너무 빠르다"는 문제의 핵심 원인). 동일하게 주기 제한을 건다.
+  // ("너무 빠르다"는 문제의 핵심 원인). 동일하게 주기 제한을 건다 -- 단, 올릴
+  // 때만: 안전을 위해 세기를 올릴 땐 여전히 조심스럽게 한 주기에 조금씩만.
   if (now - ctrl.lastStepTime < getControlPeriodMs()) {
-    ctrl.state = error > 0 ? "INCREASING" : "REDUCING";
+    ctrl.state = "INCREASING";
     return;
   }
   ctrl.lastStepTime = now;
 
-  if (error > 0) {
-    // 목표보다 덜 구부러짐 -- 조심스럽게 증가 (kpUp/maxStepUp)
-    const step = Math.min(config.control.maxStepUp, config.control.kpUp * error);
-    ctrl.intensity = clampWorkingFloat(ctrl.intensity + step);
-    ctrl.state = "INCREASING";
-  } else {
-    // 목표보다 더 구부러짐 -- 펴는 채널은 없지만, 같은 채널의 세기 자체를
-    // 낮추면 근육 수축이 약해져서 자연히 풀리는 데 도움이 된다 (kpDown/
-    // maxStepDown -- 이제 kpUp/maxStepUp과 같은 값이라 오르내리는 속도가 같다).
-    const step = Math.min(config.control.maxStepDown, config.control.kpDown * Math.abs(error));
-    ctrl.intensity = clampWorkingFloat(ctrl.intensity - step);
-    ctrl.state = "REDUCING";
-  }
+  // 목표보다 덜 구부러짐 -- 조심스럽게 증가 (kpUp/maxStepUp)
+  const step = Math.min(config.control.maxStepUp, config.control.kpUp * error);
+  ctrl.intensity = clampWorkingFloat(ctrl.intensity + step);
+  ctrl.state = "INCREASING";
 }
 
 // 손(채널1)·팔꿈치(채널2)를 매번 같이 보낸다 -- 거울모드의 driveHardwareIfNeeded와
