@@ -653,8 +653,19 @@ if (!("serial" in navigator)) {
 // ============================================================================
 
 runBtn.addEventListener("click", () => (isRunning ? stopRun() : startRun()));
-invertHandsCheckbox.addEventListener("change", () => { invertHandedness = invertHandsCheckbox.checked; });
-invertArmSidesCheckbox.addEventListener("change", () => { invertArmSides = invertArmSidesCheckbox.checked; });
+// 카메라가 좌우로 뒤집혀 보이는 원인은 손/팔이 따로가 아니라 카메라 자체 하나라,
+// 손 체크박스를 누르면 팔 쪽도 같이 뒤집히고(반대도 마찬가지) 두 체크박스가 항상
+// 같은 상태를 보여주게 동기화한다 -- 매번 따로 체크 안 해도 됨.
+invertHandsCheckbox.addEventListener("change", () => {
+  invertHandedness = invertHandsCheckbox.checked;
+  invertArmSides = invertHandsCheckbox.checked;
+  invertArmSidesCheckbox.checked = invertHandsCheckbox.checked;
+});
+invertArmSidesCheckbox.addEventListener("change", () => {
+  invertArmSides = invertArmSidesCheckbox.checked;
+  invertHandedness = invertArmSidesCheckbox.checked;
+  invertHandsCheckbox.checked = invertArmSidesCheckbox.checked;
+});
 calFlatBtn.addEventListener("click", () => startSampling("flat"));
 calBentBtn.addEventListener("click", () => startSampling("bent"));
 resetBtn.addEventListener("click", () => {
