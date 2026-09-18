@@ -21,7 +21,7 @@ EMS(전기근육자극) 기반 뇌졸중·마비 환자 재활 보조 시스템 
 | 경로 | 내용 |
 |---|---|
 | `app.js`, `index.html`, `hand_camera.py`, `*.task`, `run_server.bat` | **웹앱** (실제 시연에 쓰는 최종 버전). `run_server.bat` 실행 후 Chrome/Edge로 `http://localhost:8000` 접속. 거울/팔 인식/행동 보조/테스트 4가지 모드 지원 (행동 보조 모드 안에 이두운동·수저 들기 보조와 "탱글이" 음성 비서가 포함됨). |
-| `docs/` | 대회 제출용 보고서·전시 판넬·설계 정리 문서·시연 대본과 Q&A·시연 시 패치 위치 사진·개발 커밋 히스토리 원문. |
+| `docs/` | 대회 제출용 보고서·전시 판넬·설계 정리 문서·시연 대본과 Q&A·시연 시 패치 위치 사진·개발 커밋 히스토리 원문·팀 대화 기반 프로젝트 진행 타임라인. |
 | `hardware/case/` | 보드 케이스 3D 프린팅 설계(STL)와 조립 영상. |
 | `python-ems_closed_loop/` | 웹앱 이전에 먼저 만들어진 **파이썬(Tkinter) 프로토타입**. 같은 폐루프 제어 로직을 파이썬으로 구현한 버전 (참고/백업용, 시연에는 웹앱을 사용). |
 | `firmware/openemsstim_serial_controller/` | **현재 실제 보드에 올라가 있는 최신 Arduino 펌웨어** (openEMSstim 기반, PING/ARM/SET/STOP 시리얼 프로토콜). |
