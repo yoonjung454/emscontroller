@@ -27,8 +27,11 @@ EMS(전기근육자극) 기반 뇌졸중·마비 환자 재활 보조 시스템 
 | `firmware/openemsstim_serial_controller/` | **현재 실제 보드에 올라가 있는 최신 Arduino 펌웨어** (openEMSstim 기반, PING/ARM/SET/STOP 시리얼 프로토콜). |
 | `firmware/channel_alternate_test/` | 채널1/채널2가 실제로 어느 핀에서 나오는지 확인할 때 쓴 진단용 스케치. |
 | `archive/early_prototypes/` | 현재 구조로 정착하기 전, 초기에 시도했던 별도의 하드웨어 프로토타입(피드백 장갑, 주먹 인식 버튼 테스트) 스케치 — 개발 히스토리 보존용, 실제 시연과는 무관. |
-| `mediapipehand/` | 2026-08-23 시점 구버전 스냅샷 (참고용, 시연에 쓰지 말 것). |
-| `ems_demo_standalone.html` | 위 구버전을 모델까지 통째로 한 파일에 번들링한 공유용 데모 (역시 구버전). |
+
+> 예전에는 2026-08-23 시점 구버전 스냅샷(`mediapipehand/` 폴더)과 그걸 파일
+> 하나로 번들링한 `ems_demo_standalone.html`도 참고용으로 같이 두었으나,
+> 이 저장소의 목적이 "최종 기록/포트폴리오"로 정리되면서 혼동을 줄이기 위해
+> 삭제했습니다. 필요하면 git 히스토리에서 언제든 복원할 수 있습니다.
 
 이 저장소에는 없지만 함께 촬영해둔 시연/조립 영상(수백 MB~1GB대 mp4)은 GitHub
 용량 제한(파일당 100MB) 때문에 git에는 올리지 않았습니다 — 원본은 팀 공유
